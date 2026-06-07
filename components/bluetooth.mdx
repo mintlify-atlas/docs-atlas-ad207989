@@ -1,0 +1,436 @@
+---
+title: "Bluetooth — BLE Tracker and Proxy for ESP32"
+sidebarTitle: "Bluetooth"
+description: "Use ESP32 as a BLE advertisement scanner or Bluetooth proxy for Home Assistant. Covers esp32_ble_tracker, bluetooth_proxy, active/passive scanning, and on_ble_advertise triggers."
+---
+
+ESPHome exposes two complementary Bluetooth Low Energy features on ESP32: the **BLE Tracker** (`esp32_ble_tracker:`) scans for nearby BLE advertisements and can trigger automations or feed data to device-specific integrations, while the **Bluetooth Proxy** (`bluetooth_proxy:`) extends Home Assistant's Bluetooth range by forwarding raw BLE traffic over the native API. This page covers both components, their configuration keys, scan parameters, automation triggers, and supported device integrations.
+
+<Warning>
+All Bluetooth features documented here are **ESP32-only**. They require an ESP32 variant with a Bluetooth radio. The **ESP32-S2** does not have Bluetooth and is explicitly unsupported. ESP32-H2 and ESP32-P4 may require a co-processor.
+</Warning>
+
+---
+
+## Architecture Overview
+
+```
+BLE Devices
+    │  (advertisements / connections)
+    ▼
+ESP32
+ ├─ esp32_ble_tracker ──► on_ble_advertise triggers
+ │                     ──► device integrations (xiaomi_ble, airthings_ble …)
+ └─ bluetooth_proxy ───► Home Assistant (over native API)
+                      ──► active GATT connections (with active: true)
+```
+
+The `esp32_ble` component is the low-level BLE stack manager. It is auto-loaded by both `esp32_ble_tracker` and `bluetooth_proxy` — you do not normally need to add it manually.
+
+---
+
+## ESP32 BLE Tracker
+
+`esp32_ble_tracker:` continuously scans for BLE advertisement packets. Each detected device can trigger automations or be consumed by higher-level platform integrations.
+
+### Minimal Configuration
+
+```yaml
+esp32_ble_tracker:
+```
+
+### Full Configuration
+
+```yaml
+esp32_ble_tracker:
+  scan_parameters:
+    duration:  5min    # Scan for this long, then pause; default: 5min
+    interval: 320ms    # Time between scan windows; default: 320ms
+    window:    30ms    # Scan window width (must be ≤ interval); default: 30ms
+    active:    true    # Active scanning: send scan requests to get more data; default: true
+    continuous: true   # Keep scanning indefinitely; default: true
+
+  # Trigger on every advertisement received
+  on_ble_advertise:
+    - mac_address:
+        - AA:BB:CC:DD:EE:FF   # Optional: filter to specific MAC(s)
+      then:
+        - lambda: |-
+            ESP_LOGI("ble", "Found device: %s RSSI=%d",
+                     x.address_str().c_str(), x.get_rssi());
+
+  # Trigger on service data from a specific UUID
+  on_ble_service_data_advertise:
+    - service_uuid: "181A"      # 16-bit UUID (environmental sensing)
+      mac_address: AA:BB:CC:DD:EE:FF   # optional MAC filter
+      then:
+        - lambda: |-
+            ESP_LOGI("ble", "Service data length: %d", x.size());
+
+  # Trigger on manufacturer-specific data
+  on_ble_manufacturer_data_advertise:
+    - manufacturer_id: "004C"   # Apple
+      then:
+        - lambda: |-
+            ESP_LOGI("ble", "Apple device nearby");
+
+  # Trigger when a scan cycle ends
+  on_scan_end:
+    - logger.log: "BLE scan cycle finished"
+```
+
+### Configuration Variables
+
+<ParamField path="scan_parameters" type="map">
+  Fine-tune the BLE scan behavior. All sub-keys are optional.
+</ParamField>
+
+<ParamField path="scan_parameters.duration" type="time period" default="5min">
+  How long each scan cycle runs before pausing. Must be at least three times `interval` to cover all three BLE advertisement channels.
+</ParamField>
+
+<ParamField path="scan_parameters.interval" type="time period" default="320ms">
+  Scan interval — time between the start of successive scan windows.
+</ParamField>
+
+<ParamField path="scan_parameters.window" type="time period" default="30ms">
+  Scan window — duration of active listening within each interval. Must be ≤ `interval`.
+</ParamField>
+
+<ParamField path="scan_parameters.active" type="boolean" default="true">
+  **Active scanning**: the scanner sends BLE Scan Request packets to solicit Scan Response data from advertisers, providing more information (device name, additional service UUIDs). Set to `false` for passive-only scanning that reduces RF traffic.
+</ParamField>
+
+<ParamField path="scan_parameters.continuous" type="boolean" default="true">
+  When `true`, scanning resumes immediately after each cycle ends. When `false`, the tracker scans once and stops until explicitly restarted.
+</ParamField>
+
+---
+
+### Active vs Passive Scanning
+
+<Tabs>
+  <Tab title="Active Scanning (default)">
+    The ESP32 sends **Scan Request** packets to advertisers. Devices that support it respond with a **Scan Response** containing additional data (e.g., complete device name, extra service UUIDs).
+
+    ```yaml
+    esp32_ble_tracker:
+      scan_parameters:
+        active: true
+    ```
+
+    **Trade-off**: higher RF activity, shorter battery life on the ESP32, but richer device data.
+  </Tab>
+  <Tab title="Passive Scanning">
+    The ESP32 only listens for advertisement packets. No Scan Requests are sent, so devices cannot see the scanner.
+
+    ```yaml
+    esp32_ble_tracker:
+      scan_parameters:
+        active: false
+    ```
+
+    **Trade-off**: lower power consumption, better for privacy-sensitive environments, but limited to data in the advertisement itself.
+  </Tab>
+</Tabs>
+
+---
+
+### Automation Triggers
+
+#### on_ble_advertise
+
+Fires for every detected BLE advertisement. Filter by one or more MAC addresses using the `mac_address` list.
+
+```yaml
+esp32_ble_tracker:
+  on_ble_advertise:
+    - mac_address:
+        - "AA:BB:CC:DD:EE:FF"
+        - "11:22:33:44:55:66"
+      then:
+        - lambda: |-
+            ESP_LOGI("ble", "RSSI: %d dBm", x.get_rssi());
+            ESP_LOGI("ble", "Address: %s", x.address_str().c_str());
+```
+
+The `x` variable is an `ESPBTDevice` const reference with methods including:
+- `x.address_str()` — MAC address as string
+- `x.get_rssi()` — signal strength in dBm
+- `x.get_name()` — advertised device name
+- `x.get_service_uuids()` — list of advertised service UUIDs
+- `x.get_manufacturer_datas()` — manufacturer-specific data payloads
+
+#### on_ble_service_data_advertise
+
+Fires when an advertisement contains service data matching a specific UUID.
+
+```yaml
+esp32_ble_tracker:
+  on_ble_service_data_advertise:
+    - service_uuid: "FE95"   # Xiaomi Mi Home service UUID
+      then:
+        - lambda: |-
+            for (uint8_t byte : x) {
+              ESP_LOGD("ble", "0x%02X", byte);
+            }
+```
+
+<ParamField path="on_ble_service_data_advertise.service_uuid" type="UUID string" required>
+  BLE service UUID in 16-bit (`XXXX`), 32-bit (`XXXXXXXX`), or 128-bit (`XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`) format.
+</ParamField>
+
+<ParamField path="on_ble_service_data_advertise.mac_address" type="MAC address">
+  Optional single MAC address filter.
+</ParamField>
+
+#### on_ble_manufacturer_data_advertise
+
+Fires when an advertisement contains manufacturer-specific data matching a company ID.
+
+```yaml
+esp32_ble_tracker:
+  on_ble_manufacturer_data_advertise:
+    - manufacturer_id: "0499"   # Ruuvi Innovations
+      then:
+        - lambda: |-
+            ESP_LOGI("ble", "Ruuvi data length: %d", x.size());
+```
+
+#### on_scan_end
+
+Fires when a non-continuous scan cycle completes.
+
+```yaml
+esp32_ble_tracker:
+  scan_parameters:
+    continuous: false
+  on_scan_end:
+    - logger.log: "Scan complete — going to sleep"
+    - deep_sleep.enter:
+        id: deep_sleep_1
+```
+
+---
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| `esp32_ble_tracker.start_scan` | Start a BLE scan. Accepts `continuous: bool`. |
+| `esp32_ble_tracker.stop_scan` | Stop an ongoing scan. |
+
+```yaml
+on_...:
+  - esp32_ble_tracker.start_scan:
+      continuous: false
+```
+
+---
+
+## Bluetooth Proxy
+
+`bluetooth_proxy:` uses the native ESPHome API to forward BLE advertisement data and optionally GATT connections from the ESP32 to Home Assistant, effectively extending Home Assistant's Bluetooth range.
+
+<Note>
+`bluetooth_proxy:` requires the `api:` component. It auto-loads `esp32_ble_tracker:` and `esp32_ble_client:`.
+</Note>
+
+### Minimal Configuration
+
+```yaml
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+bluetooth_proxy:
+```
+
+### Full Configuration
+
+```yaml
+bluetooth_proxy:
+  active: true            # Enable GATT connection proxying (default: true)
+  cache_services: true    # Cache GATT service discovery in NVS flash (default: true)
+  connection_slots: 3     # Max simultaneous proxied connections (default: 3)
+```
+
+### Configuration Variables
+
+<ParamField path="active" type="boolean" default="true">
+  When `true`, the proxy supports active BLE connections (GATT reads/writes/notifications) in addition to passive advertisement forwarding. Set to `false` for advertisement-only proxy mode.
+</ParamField>
+
+<ParamField path="connection_slots" type="integer" default="3">
+  Maximum number of simultaneous active GATT connections proxied to Home Assistant. Each slot consumes a BLE connection from the ESP32's connection pool. Maximum is limited by `esp32_ble.max_connections` (up to 9 for ESP-IDF). Ignored when `active: false`.
+</ParamField>
+
+<ParamField path="cache_services" type="boolean" default="true">
+  Cache BLE GATT service discovery results in NVS (non-volatile storage) flash. Speeds up subsequent connections to the same device.
+</ParamField>
+
+---
+
+### Active vs Passive Proxy Mode
+
+<Tabs>
+  <Tab title="Active (default)">
+    The proxy forwards both BLE advertisements **and** GATT connection requests from Home Assistant through to BLE devices. Supports reading characteristics, writing values, and receiving notifications.
+
+    ```yaml
+    bluetooth_proxy:
+      active: true
+      connection_slots: 3   # Reserve 3 BLE connection slots
+    ```
+
+    Use this when Home Assistant needs to connect to and control BLE devices (e.g., Bluetooth thermometers, locks, lights).
+  </Tab>
+  <Tab title="Passive">
+    The proxy only forwards advertisement packets. No GATT connections are established. Lower resource usage.
+
+    ```yaml
+    bluetooth_proxy:
+      active: false
+    ```
+
+    Use this for devices that only broadcast (e.g., Ruuvi tags, Govee sensors) and don't need a connection.
+  </Tab>
+</Tabs>
+
+---
+
+## Low-Level BLE Stack (`esp32_ble`)
+
+The `esp32_ble` component manages the underlying Bluedroid BLE stack. It is automatically pulled in by both `esp32_ble_tracker` and `bluetooth_proxy`, but you can add it explicitly to control advanced options.
+
+```yaml
+esp32_ble:
+  io_capability: none          # none | keyboard_only | keyboard_display | display_only | display_yes_no
+  enable_on_boot: true
+  max_connections: 3           # Total BLE connection slots (1–9, default: 3)
+  connection_timeout: 20s      # BLE connection establishment timeout (10–180s)
+  disable_bt_logs: true        # Suppress verbose Bluetooth stack logs
+  advertising: false           # Enable BLE advertising (e.g., for BLE server)
+```
+
+<ParamField path="max_connections" type="integer" default="3">
+  Total BLE connection pool size shared across all BLE client components. Range: 1–9. Increase if `bluetooth_proxy.connection_slots` requires more slots than the default provides.
+</ParamField>
+
+<ParamField path="connection_timeout" type="time period" default="20s">
+  Timeout for establishing a GATT connection. Must be between 10 s and 180 s. Setting this to match your BLE client library's timeout (e.g., `aioesphomeapi` uses 20 s) avoids orphaned connection slots.
+</ParamField>
+
+<ParamField path="disable_bt_logs" type="boolean" default="true">
+  Silence the Bluetooth stack's verbose internal logs. Disable only when debugging BLE issues.
+</ParamField>
+
+---
+
+## Supported BLE Device Integrations
+
+`esp32_ble_tracker` is the foundation for many device-specific ESPHome platforms. Add the relevant platform under the appropriate sensor/entity type:
+
+<CardGroup cols={2}>
+  <Card title="xiaomi_ble" icon="thermometer">
+    Xiaomi Mi Home sensors (LYWSDCGQ, LYWSD03MMC, CGG1, MiFlora, and many more). Parses proprietary Xiaomi BLE protocol.
+  </Card>
+  <Card title="airthings_ble" icon="wind">
+    Airthings air quality monitors (Wave Plus, Wave Mini). Reads radon, CO₂, VOC, temperature, and humidity.
+  </Card>
+  <Card title="ruuvitag" icon="tag">
+    Ruuvi RuuviTag environment sensors (temperature, humidity, pressure, acceleration) via manufacturer data.
+  </Card>
+  <Card title="govee_ble" icon="droplet">
+    Govee Bluetooth thermometer/hygrometer devices.
+  </Card>
+  <Card title="inkbird" type="card" icon="gauge">
+    Inkbird IBS-TH1/TH2 temperature and humidity sensors.
+  </Card>
+  <Card title="mopeka_pro_check" icon="propane-tank">
+    Mopeka propane tank level sensors using BLE advertisement data.
+  </Card>
+</CardGroup>
+
+### Example: Xiaomi MiFlora Plant Sensor
+
+```yaml
+esp32_ble_tracker:
+
+sensor:
+  - platform: xiaomi_hhccjcy01
+    mac_address: "AA:BB:CC:DD:EE:FF"
+    temperature:
+      name: "Plant Temperature"
+    moisture:
+      name: "Plant Moisture"
+    illuminance:
+      name: "Plant Light"
+    conductivity:
+      name: "Plant Conductivity"
+```
+
+---
+
+## Combined Bluetooth Proxy + BLE Tracker Example
+
+A common production setup uses both the proxy (for HA Bluetooth extension) and the tracker (for local automations):
+
+```yaml
+esphome:
+  name: bt-proxy-hallway
+  platform: esp32
+  board: esp32dev
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+# Proxy — extends HA Bluetooth range
+bluetooth_proxy:
+  active: true
+  connection_slots: 3
+
+# Tracker — local automations on nearby devices
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    continuous: true
+
+  on_ble_advertise:
+    - mac_address:
+        - "AA:BB:CC:DD:EE:FF"   # e.g., a known beacon
+      then:
+        - logger.log: "Beacon detected — someone is home"
+        - homeassistant.action:
+            action: input_boolean.turn_on
+            data:
+              entity_id: input_boolean.someone_home
+```
+
+<Note>
+When using `bluetooth_proxy:` alongside `esp32_ble_tracker:`, both share the same underlying `esp32_ble` stack. Ensure `esp32_ble.max_connections` is large enough to accommodate all `bluetooth_proxy.connection_slots`.
+</Note>
+
+---
+
+## Troubleshooting
+
+<CardGroup cols={2}>
+  <Card title="BLE scan not finding devices" icon="magnifying-glass">
+    Try `active: true` to send Scan Requests. Reduce the scan interval or increase the scan window. Ensure the device is broadcasting and not in a connected state to another host.
+  </Card>
+  <Card title="Proxy drops connections" icon="link-slash">
+    Increase `connection_slots` and ensure `esp32_ble.max_connections` is at least equal to `connection_slots`. Check available heap memory — each connection slot uses RAM.
+  </Card>
+  <Card title="High CPU / watchdog resets" icon="cpu">
+    Reduce `connection_slots`. Disable `cache_services` if NVS writes are causing stalls. Use `passive_scan` on the BLE tracker if advertisement processing is too heavy.
+  </Card>
+  <Card title="ESP32-S2 not supported" icon="triangle-exclamation">
+    The ESP32-S2 has no Bluetooth radio. Use a different ESP32 variant: ESP32 (classic), ESP32-C3, ESP32-S3, ESP32-C6, or ESP32-H2 (with hosted co-processor).
+  </Card>
+</CardGroup>

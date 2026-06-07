@@ -1,0 +1,383 @@
+---
+title: "ESPHome Automations: Triggers, Conditions, and Actions"
+sidebarTitle: "Automations"
+description: "A complete guide to ESPHome's automation system: triggers, conditions, actions, lambda expressions, scripts, and the then/else pattern."
+---
+
+ESPHome's automation system lets you describe device behaviour entirely in YAML without writing any C++. Every automation follows the same three-part model: a **trigger** detects an event, optional **conditions** gate whether to proceed, and a list of **actions** executes in sequence when the conditions are met. This page covers every layer of that system — from simple one-liners to parameterised scripts and inline C++ lambdas.
+
+---
+
+## The automation model
+
+```
+Trigger  →  [Conditions]  →  Actions
+```
+
+Triggers, conditions, and actions are all registered in ESPHome's Python code-generation layer via `register_trigger`, `register_condition`, and `register_action` respectively. Each one corresponds to a C++ template class (`Trigger<Ts...>`, `Condition<Ts...>`, `Action<Ts...>`) that is instantiated at compile time with the trigger's argument types. This means automations have zero runtime overhead from dynamic dispatch.
+
+---
+
+## Triggers
+
+A trigger is the starting point of an automation. Every component that supports automations exposes one or more triggers as YAML keys prefixed with `on_`.
+
+### `on_boot` and `on_shutdown`
+
+These fire on the `esphome:` block and accept an optional `priority` float (default `600.0`). Higher values run earlier.
+
+```yaml
+esphome:
+  name: my-device
+  on_boot:
+    priority: 600
+    then:
+      - logger.log: "Device booted"
+  on_shutdown:
+    then:
+      - logger.log: "Device shutting down"
+```
+
+### `on_loop`
+
+Also on the `esphome:` block. Fires every main-loop iteration with no arguments.
+
+```yaml
+esphome:
+  name: my-device
+  on_loop:
+    then:
+      - lambda: "ESP_LOGD(\"loop\", \"tick\");"
+```
+
+### Component event triggers
+
+Most components expose their own triggers. A `binary_sensor:` has `on_press`, `on_release`, `on_click`, `on_double_click`, `on_state`. A `sensor:` has `on_value`, `on_value_range`, `on_raw_value`. These are documented on each component's page; the automation system is the same for all of them.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO4
+    name: "Door Sensor"
+    on_press:
+      then:
+        - logger.log: "Door opened"
+    on_release:
+      then:
+        - logger.log: "Door closed"
+```
+
+---
+
+## The `then:` / `else:` pattern
+
+When a trigger has only actions and no conditions, you can write the action list directly under `then:`:
+
+```yaml
+on_press:
+  then:
+    - logger.log: "pressed"
+```
+
+You can also omit `then:` entirely and write the actions as a list directly on the trigger when there are no conditions:
+
+```yaml
+on_press:
+  - logger.log: "pressed"
+```
+
+The `else:` branch is available inside the `if` action (see below).
+
+---
+
+## Conditions
+
+Conditions are evaluated when an automation fires, before the actions run. Multiple conditions can be composed with boolean logic.
+
+### `and`, `or`, `not`, `xor`
+
+These are the fundamental boolean combinators. `and` (alias `all`) requires every sub-condition to be true. `or` (alias `any`) requires at least one. `not` inverts a single condition. `xor` requires exactly an odd number of sub-conditions to be true.
+
+```yaml
+on_press:
+  condition:
+    and:
+      - wifi.connected:
+      - api.connected:
+  then:
+    - logger.log: "Connected and button pressed"
+```
+
+### `for`
+
+True only if another condition has been continuously true for at least the specified duration.
+
+```yaml
+condition:
+  for:
+    time: 10s
+    condition:
+      binary_sensor.is_on: my_sensor
+```
+
+### `lambda`
+
+Evaluates an inline C++ expression that must return `bool`.
+
+```yaml
+condition:
+  lambda: "return id(my_sensor).state > 25.0;"
+```
+
+### `component.is_idle`
+
+True when the given polling component has no pending update.
+
+```yaml
+condition:
+  component.is_idle: my_component_id
+```
+
+---
+
+## Built-in actions
+
+<Accordion title="Full list of core built-in actions">
+
+**`delay`** — Pause the automation for a given duration. Supports templatable time periods.
+```yaml
+- delay: 500ms
+- delay: !lambda "return id(my_number).state * 1000;"
+```
+
+**`lambda`** — Execute arbitrary inline C++ code. The lambda receives the trigger arguments as parameters.
+```yaml
+- lambda: |-
+    ESP_LOGI("main", "Current temp: %.1f", id(temperature_sensor).state);
+```
+
+**`if`** — Conditionally branch. Supports `condition:`, `any:`, and `all:` keys. Both `then:` and `else:` are optional, but at least one must be present.
+```yaml
+- if:
+    condition:
+      binary_sensor.is_on: motion_sensor
+    then:
+      - light.turn_on: hall_light
+    else:
+      - light.turn_off: hall_light
+```
+
+**`while`** — Repeat actions as long as a condition is true.
+```yaml
+- while:
+    condition:
+      sensor.in_range:
+        id: distance
+        above: 100
+    then:
+      - logger.log: "Still out of range"
+      - delay: 1s
+```
+
+**`repeat`** — Execute actions a fixed number of times. The iteration counter is available as `iteration` (zero-based `uint32_t`) inside any `lambda` in the `then:` block.
+```yaml
+- repeat:
+    count: 3
+    then:
+      - output.turn_on: buzzer
+      - delay: 100ms
+      - output.turn_off: buzzer
+      - delay: 100ms
+```
+
+**`wait_until`** — Block the automation until a condition becomes true, with an optional timeout.
+```yaml
+- wait_until:
+    condition:
+      api.connected:
+    timeout: 30s
+```
+
+**`component.update`** — Force an immediate update of a polling component, bypassing its normal `update_interval`.
+```yaml
+- component.update: my_sensor
+```
+
+**`component.suspend`** — Suspend a polling component, stopping its periodic updates.
+```yaml
+- component.suspend: my_sensor
+```
+
+**`component.resume`** — Resume a suspended polling component, optionally changing its `update_interval`.
+```yaml
+- component.resume:
+    id: my_sensor
+    update_interval: 5s
+```
+
+</Accordion>
+
+---
+
+## Lambda expressions
+
+Lambdas are snippets of inline C++ code embedded in YAML using the `!lambda` tag or the `lambda:` action key. They are compiled directly into the generated `main.cpp`, so they have full access to all ESPHome APIs.
+
+### Accessing component state
+
+Components declared with an `id:` are available as C++ pointers of their generated type. The `->state` member holds the current value for sensors, and `->is_on()` / `->is_off()` for binary sensors.
+
+```yaml
+sensor:
+  - platform: dht
+    id: dht_sensor
+    temperature:
+      id: temperature
+
+binary_sensor:
+  - platform: gpio
+    id: door_sensor
+    pin: GPIO5
+
+on_boot:
+  then:
+    - lambda: |-
+        float t = id(temperature).state;
+        bool door = id(door_sensor).is_on();
+        ESP_LOGI("main", "Temp: %.1f, Door: %s", t, door ? "open" : "closed");
+```
+
+### Returning values
+
+Conditions and templatable fields expect the lambda to return a value. Return type is inferred from context.
+
+```yaml
+# Condition lambda — must return bool
+condition:
+  lambda: "return id(temperature).state > 30.0f;"
+
+# Templatable delay — must return uint32_t (milliseconds)
+- delay: !lambda "return id(my_number).state * 1000;"
+```
+
+### Multi-line lambdas
+
+Use the YAML block scalar `|-` to write multi-line lambdas cleanly:
+
+```yaml
+- lambda: |-
+    auto brightness = id(lux_sensor).state;
+    if (brightness < 10.0f) {
+      id(night_light).turn_on().set_brightness(1.0f).perform();
+    }
+```
+
+---
+
+## Scripts
+
+Scripts are reusable named action sequences defined under the top-level `script:` key. They can be called from any automation with `script.execute`, stopped with `script.stop`, or waited on with `script.wait`.
+
+### Script modes
+
+The `mode:` key controls what happens when a script is called while it is already running.
+
+| Mode | Behaviour |
+|------|-----------|
+| `single` (default) | New execution is ignored if already running |
+| `restart` | Running instance is stopped; a new one starts |
+| `queued` | New execution is queued (default `max_runs: 5`) |
+| `parallel` | Multiple instances run concurrently |
+
+```yaml
+script:
+  - id: alert_sequence
+    mode: single
+    then:
+      - output.turn_on: buzzer
+      - delay: 200ms
+      - output.turn_off: buzzer
+      - delay: 200ms
+      - output.turn_on: buzzer
+      - delay: 200ms
+      - output.turn_off: buzzer
+```
+
+### Calling a script
+
+```yaml
+on_press:
+  then:
+    - script.execute: alert_sequence
+```
+
+### Parameters
+
+Scripts support typed parameters that are passed at call time. Supported primitive types include `bool`, `int`, `float`, `string`, and C++ types like `std::string`. Array types use the `[]` suffix.
+
+```yaml
+script:
+  - id: flash_led
+    parameters:
+      count: int
+      on_time_ms: int
+    then:
+      - repeat:
+          count: !lambda "return count;"
+          then:
+            - output.turn_on: indicator_led
+            - delay: !lambda "return on_time_ms;"
+            - output.turn_off: indicator_led
+            - delay: !lambda "return on_time_ms;"
+
+on_press:
+  then:
+    - script.execute:
+        id: flash_led
+        count: 3
+        on_time_ms: 100
+```
+
+### Checking if a script is running
+
+```yaml
+condition:
+  script.is_running: alert_sequence
+```
+
+---
+
+## Putting it all together
+
+This example combines a trigger, condition, `if` action, `wait_until`, and a script call:
+
+```yaml
+script:
+  - id: send_alert
+    mode: single
+    then:
+      - homeassistant.event:
+          event: esphome.motion_alert
+          data:
+            room: living_room
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO14
+    name: "Motion Sensor"
+    on_press:
+      - if:
+          condition:
+            and:
+              - wifi.connected:
+              - api.connected:
+          then:
+            - script.execute: send_alert
+          else:
+            - logger.log: "Offline — alert queued locally"
+            - wait_until:
+                condition:
+                  api.connected:
+                timeout: 60s
+            - script.execute: send_alert
+```

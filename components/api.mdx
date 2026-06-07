@@ -1,0 +1,333 @@
+---
+title: "Native API — ESPHome's Encrypted Device Protocol"
+sidebarTitle: "Native API"
+description: "Configure the ESPHome native API for direct Home Assistant integration. Covers encryption keys, user-defined actions, HA service calls, connection triggers, and max_connections."
+---
+
+The `api:` component activates ESPHome's native binary protocol — a purpose-built, low-overhead alternative to MQTT for communicating directly with Home Assistant. Unlike MQTT, the native API does not require a separate broker: Home Assistant connects to the device over TCP port 6053 and communicates using an encrypted, protobuf-framed protocol. This page covers encryption configuration, user-defined actions (services callable from Home Assistant), calling Home Assistant services from the device, connection lifecycle triggers, and connection-limit tuning.
+
+<Note>
+The `api:` and `mqtt:` components can coexist. A common pattern is to use `api:` for Home Assistant and `mqtt:` for interoperability with other systems.
+</Note>
+
+---
+
+## Minimal Configuration
+
+```yaml
+api:
+```
+
+This is enough to enable the API on the default port (6053) without encryption — suitable for isolated networks. For production use, add an encryption key.
+
+---
+
+## Encryption
+
+ESPHome uses the [Noise protocol](http://noiseprotocol.org/) for API encryption. A 32-byte pre-shared key is exchanged as a base64 string.
+
+<Steps>
+  <Step title="Generate a key">
+    ```bash
+    openssl rand -base64 32
+    ```
+    Copy the output (e.g., `mOBa7g2GaFl3N8...`) into your `secrets.yaml`:
+    ```yaml
+    api_encryption_key: "mOBa7g2GaFl3N8..."
+    ```
+  </Step>
+  <Step title="Reference the key in your config">
+    ```yaml
+    api:
+      encryption:
+        key: !secret api_encryption_key
+    ```
+  </Step>
+  <Step title="Add the key to Home Assistant">
+    When adding the ESPHome integration in Home Assistant, paste the same key into the **Encryption Key** field.
+  </Step>
+</Steps>
+
+<Warning>
+The `password:` option was removed in ESPHome 2026.1.0. Migrate to the `encryption.key` approach shown above.
+</Warning>
+
+---
+
+## Complete Annotated Example
+
+```yaml
+api:
+  # ── Encryption ────────────────────────────────────────────────────────────
+  encryption:
+    key: !secret api_encryption_key  # base64-encoded 32-byte key
+
+  # ── Connection settings ───────────────────────────────────────────────────
+  port: 6053                   # TCP port (default: 6053)
+  reboot_timeout: 15min        # Reboot if no client connects within this time
+  max_connections: 5           # Max simultaneous clients (platform-dependent default)
+  batch_delay: 100ms           # Batch state updates for this long before sending
+
+  # ── Lifecycle triggers ────────────────────────────────────────────────────
+  on_client_connected:
+    - logger.log:
+        format: "Client connected: %s"
+        args: [client_info.c_str()]
+  on_client_disconnected:
+    - logger.log:
+        format: "Client disconnected: %s"
+        args: [client_info.c_str()]
+
+  # ── User-defined actions (callable from HA) ───────────────────────────────
+  actions:
+    - action: play_rtttl
+      variables:
+        song_str: string
+      then:
+        - rtttl.play: !lambda "return song_str;"
+
+    - action: set_target_temp
+      variables:
+        temperature: float
+      then:
+        - climate.control:
+            id: my_thermostat
+            target_temperature: !lambda "return temperature;"
+```
+
+---
+
+## Configuration Variables
+
+<ParamField path="encryption" type="map">
+  Noise protocol encryption settings. Contains a single sub-key `key`.
+</ParamField>
+
+<ParamField path="encryption.key" type="string">
+  Base64-encoded 32-byte pre-shared key. Generate with `openssl rand -base64 32`. When omitted but `encryption:` is present, the device operates in a hybrid mode that allows a plaintext client to provision a key, which is then saved to flash and used for all future connections.
+</ParamField>
+
+<ParamField path="port" type="integer" default="6053">
+  TCP port the API server listens on.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="time period" default="15min">
+  If no API client connects within this window after boot, the device reboots. Set to `0s` to disable.
+</ParamField>
+
+<ParamField path="max_connections" type="integer" default="platform-dependent">
+  Maximum number of simultaneous API clients. Platform defaults: ESP8266 → 4, ESP32 → 5, RP2040 → 4, BK72xx/RTL87xx/ln882x → 5, host → 8. Range: 1–20.
+</ParamField>
+
+<ParamField path="batch_delay" type="time period" default="100ms">
+  Coalesce state updates into a single network write for up to this duration. Reducing it lowers latency; increasing it can improve throughput on slow links.
+</ParamField>
+
+<ParamField path="actions" type="list">
+  User-defined actions (formerly `services:`) callable from Home Assistant automations and scripts. See [User-Defined Actions](#user-defined-actions).
+</ParamField>
+
+<ParamField path="on_client_connected" type="automation">
+  Runs when an API client connects. Exposes `client_info` (string) and `client_address` (string) variables.
+</ParamField>
+
+<ParamField path="on_client_disconnected" type="automation">
+  Runs when an API client disconnects. Exposes the same `client_info` and `client_address` variables.
+</ParamField>
+
+---
+
+## User-Defined Actions
+
+Actions (previously called `services`) expose callable endpoints that appear in Home Assistant's **Services** panel under `esphome.<device_name>_<action_name>`. Each action can accept typed variables and run any ESPHome automation chain.
+
+### Variable Types
+
+| Type | Description |
+|------|-------------|
+| `bool` | Boolean value |
+| `int` | 32-bit signed integer |
+| `float` | Single-precision float |
+| `string` | UTF-8 string |
+| `bool[]` | Array of booleans |
+| `int[]` | Array of integers |
+| `float[]` | Array of floats |
+| `string[]` | Array of strings |
+
+### Examples
+
+<CodeGroup>
+```yaml Single variable
+api:
+  actions:
+    - action: set_display_text
+      variables:
+        message: string
+      then:
+        - display.print:
+            id: my_display
+            text: !lambda "return message;"
+```
+
+```yaml Multiple variables
+api:
+  actions:
+    - action: set_rgb_color
+      variables:
+        red: float
+        green: float
+        blue: float
+      then:
+        - light.turn_on:
+            id: rgb_light
+            red: !lambda "return red;"
+            green: !lambda "return green;"
+            blue: !lambda "return blue;"
+```
+
+```yaml Array variable
+api:
+  actions:
+    - action: play_tones
+      variables:
+        frequencies: float[]
+      then:
+        - lambda: |-
+            for (float f : frequencies) {
+              id(buzzer).play_tone(f, 100);
+            }
+```
+</CodeGroup>
+
+<Note>
+`services:` and `actions:` are interchangeable keys — `services:` is automatically renamed to `actions:` during config processing.
+</Note>
+
+---
+
+## Calling Home Assistant Services from the Device
+
+Use the `homeassistant.action` automation action to invoke any Home Assistant service (including scripts and scenes) directly from ESPHome automations.
+
+```yaml
+on_...:
+  - homeassistant.action:
+      action: light.turn_on
+      data:
+        entity_id: light.living_room
+        brightness: "255"
+      data_template:
+        color_temp: "{{ state_attr('sensor.lux', 'state') }}"
+      variables:
+        brightness_pct: !lambda "return id(dim_sensor).state;"
+```
+
+<ParamField path="homeassistant.action.action" type="string" required>
+  Home Assistant service domain and name, e.g. `light.turn_on`, `script.my_script`.
+</ParamField>
+
+<ParamField path="homeassistant.action.data" type="map">
+  Static key-value pairs passed as service call data.
+</ParamField>
+
+<ParamField path="homeassistant.action.data_template" type="map">
+  Jinja2 template strings evaluated by Home Assistant.
+</ParamField>
+
+<ParamField path="homeassistant.action.variables" type="map">
+  ESPHome lambda expressions whose return values are injected as template variables.
+</ParamField>
+
+<ParamField path="homeassistant.action.on_success" type="automation">
+  Optional automation triggered if Home Assistant reports the call succeeded.
+</ParamField>
+
+<ParamField path="homeassistant.action.on_error" type="automation">
+  Optional automation triggered if Home Assistant reports a failure. Receives an `error` string variable.
+</ParamField>
+
+### Firing Home Assistant Events
+
+```yaml
+on_...:
+  - homeassistant.event:
+      event: esphome.button_pressed
+      data:
+        button_id: "front_door"
+```
+
+Events must start with the `esphome.` prefix.
+
+### Reporting an NFC / RFID Tag Scan
+
+```yaml
+on_tag:
+  - homeassistant.tag_scanned: !lambda "return x;"
+```
+
+---
+
+## Conditions
+
+<ParamField path="api.connected" type="condition">
+  Evaluates to `true` when at least one API client is connected. Optionally, set `state_subscription_only: true` to check for clients that have subscribed to entity state updates.
+</ParamField>
+
+```yaml
+# Only run an action when HA is actively connected
+- if:
+    condition:
+      api.connected:
+    then:
+      - logger.log: "Home Assistant is connected"
+```
+
+---
+
+## Connection Lifecycle Triggers
+
+Both triggers expose two string variables: `client_info` (a human-readable description of the client) and `client_address` (the client's IP address).
+
+```yaml
+api:
+  on_client_connected:
+    - logger.log:
+        format: "New API client: %s @ %s"
+        args: [client_info.c_str(), client_address.c_str()]
+
+  on_client_disconnected:
+    - logger.log:
+        format: "API client left: %s"
+        args: [client_info.c_str()]
+```
+
+---
+
+## Native API vs MQTT
+
+<CardGroup cols={2}>
+  <Card title="Native API" icon="bolt">
+    **Lower latency** — no broker round-trip. Direct TCP connection to Home Assistant. Encrypted with Noise protocol. Entities appear instantly in the HA UI. Requires Home Assistant with ESPHome integration.
+  </Card>
+  <Card title="MQTT" icon="arrows-left-right">
+    **Broader compatibility** — works with any MQTT client. Supports wildcards, retained messages, and QoS levels. Required for non-HA platforms (Node-RED, openHAB, etc.). Needs a running broker.
+  </Card>
+</CardGroup>
+
+---
+
+## Platform Connection Limits
+
+The `max_connections` and internal `listen_backlog` values have platform-specific defaults tuned to available RAM:
+
+| Platform | Default `max_connections` |
+|----------|--------------------------|
+| ESP8266 | 4 |
+| ESP32 | 5 |
+| RP2040 | 4 |
+| BK72xx | 5 |
+| RTL87xx | 5 |
+| ln882x | 5 |
+| host | 8 |
+
+Each simultaneous API connection uses approximately 500–1000 bytes of RAM plus system socket resources.

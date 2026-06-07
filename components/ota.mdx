@@ -1,0 +1,268 @@
+---
+title: "Over-the-Air Updates (OTA) in ESPHome"
+sidebarTitle: "OTA Updates"
+description: "Configure wireless firmware updates for ESP32, ESP8266, BK72xx, and RP2040 devices using ESPHome's OTA platform system."
+---
+
+ESPHome supports Over-the-Air (OTA) firmware updates so you can push new firmware to your devices over Wi-Fi without physical access. This page covers the `ota:` configuration block, supported platforms, event triggers, password protection, and how `esphome run` integrates OTA into your development workflow.
+
+## How OTA Works
+
+After the first USB flash, the device listens for an OTA upload on the configured port. When you run `esphome run device.yaml`, ESPHome compiles the firmware, then uploads it wirelessly using the OTA protocol instead of requiring a USB connection.
+
+<Note>
+OTA is a **platform component** — you must specify at least one `platform:` entry under `ota:`. The `esphome` platform provides the original ESPHome OTA protocol used by the `esphome run` and `esphome upload` CLI commands.
+</Note>
+
+## Basic Configuration
+
+The `ota:` key takes a **list** of platform entries. Each entry must include `platform:` and can include platform-specific options.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "my_secret_ota_password"
+```
+
+### Multiple OTA Platforms
+
+You can enable more than one OTA method simultaneously — for example, the native ESPHome OTA alongside HTTP-based OTA:
+
+```yaml
+ota:
+  - platform: esphome
+    password: "my_ota_password"
+  - platform: http_request
+```
+
+<Warning>
+At least one platform **must** be specified. If `ota:` is present with no platform entries, ESPHome will raise a validation error.
+</Warning>
+
+## Configuration Variables
+
+### `platform: esphome` (recommended)
+
+The built-in ESPHome OTA platform uses a dedicated binary protocol over TCP and is the transport used by `esphome run` and `esphome upload`.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `platform` | string | — | **Required.** Set to `esphome`. |
+| `password` | string | `""` | OTA password. Strongly recommended for security. |
+
+### `platform: arduino`
+
+Uses the Arduino OTA library (ArduinoOTA). Supported on ESP8266 and ESP32 with the Arduino framework.
+
+### `platform: http_request`
+
+Enables pulling firmware from an HTTP/HTTPS URL. Requires the `http_request` component to be configured.
+
+## Safe Mode Integration
+
+The `ota` component **automatically loads** the `safe_mode` component (`AUTO_LOAD`). This means even if your main application firmware crashes repeatedly, the device will enter safe mode where only OTA-related components are active, allowing you to push a fixed firmware.
+
+<Tip>
+You do not need to explicitly add `safe_mode:` to your config — it is pulled in automatically when `ota:` is present.
+</Tip>
+
+See the [Safe Mode component](/components/safe-mode) for full details on configuring the recovery behaviour.
+
+## Event Automation Triggers
+
+All OTA platform entries inherit the base trigger set. These allow you to react to OTA lifecycle events with automations.
+
+<Accordion title="on_begin — OTA update started">
+
+Fires when an OTA update begins. No parameters.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_begin:
+      then:
+        - logger.log: "OTA update starting…"
+```
+
+</Accordion>
+
+<Accordion title="on_progress — upload progress">
+
+Fires repeatedly during upload. Receives a `float x` parameter containing the current progress percentage (0.0–100.0).
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_progress:
+      then:
+        - logger.log:
+            format: "OTA progress: %.1f%%"
+            args: ["x"]
+```
+
+</Accordion>
+
+<Accordion title="on_end — OTA completed successfully">
+
+Fires when the firmware has been fully received and verified. The device will reboot shortly after.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_end:
+      then:
+        - logger.log: "OTA complete — rebooting"
+```
+
+</Accordion>
+
+<Accordion title="on_error — OTA failed">
+
+Fires when an error occurs during OTA. Receives a `uint8_t x` error code.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_error:
+      then:
+        - logger.log:
+            format: "OTA error code: %d"
+            args: ["x"]
+```
+
+</Accordion>
+
+<Accordion title="on_abort — OTA aborted">
+
+Fires when an in-progress OTA is aborted before completion.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_abort:
+      then:
+        - logger.log: "OTA was aborted"
+```
+
+</Accordion>
+
+<Accordion title="on_state_change — any state transition">
+
+Fires on every OTA state change. Receives an `OTAState state` enum value representing the new state (`OTA_STARTED`, `OTA_IN_PROGRESS`, `OTA_COMPLETED`, `OTA_ABORT`, `OTA_ERROR`).
+
+```yaml
+ota:
+  - platform: esphome
+    password: "secret"
+    on_state_change:
+      then:
+        - logger.log: "OTA state changed"
+```
+
+</Accordion>
+
+## Password Protection
+
+Setting a password is strongly recommended for any internet-facing or shared network device. ESPHome's OTA protocol will request authentication before accepting any firmware.
+
+```yaml
+ota:
+  - platform: esphome
+    password: "a_long_random_string_here"
+```
+
+<Warning>
+If you add a password to an existing device, the next OTA upload must be done with `esphome run` which will prompt for or store the password. Devices without a password accept firmware from anyone on the network.
+</Warning>
+
+Store the password in a secrets file so it is not committed to version control:
+
+```yaml
+# secrets.yaml
+ota_password: "a_long_random_string_here"
+```
+
+```yaml
+# device.yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+## Getting Started: First Flash and OTA Workflow
+
+<Steps>
+  <Step title="Flash via USB the first time">
+    Connect your device via USB and run:
+    ```bash
+    esphome run device.yaml
+    ```
+    ESPHome will compile the firmware and upload it over USB serial. The device now has OTA capability.
+  </Step>
+
+  <Step title="Update wirelessly from now on">
+    Disconnect the USB cable. For all future updates, run the same command — ESPHome automatically detects the device on the network and uploads via OTA:
+    ```bash
+    esphome run device.yaml
+    ```
+  </Step>
+
+  <Step title="Upload only (no log streaming)">
+    To upload without attaching to the log stream afterward:
+    ```bash
+    esphome upload device.yaml
+    ```
+  </Step>
+</Steps>
+
+## Full Example
+
+```yaml
+esphome:
+  name: my-sensor
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      then:
+        - logger.log: "Starting OTA update"
+    on_progress:
+      then:
+        - logger.log:
+            format: "OTA progress %.0f%%"
+            args: ["x"]
+    on_end:
+      then:
+        - logger.log: "OTA finished, rebooting"
+    on_error:
+      then:
+        - logger.log:
+            format: "OTA error: %d"
+            args: ["x"]
+
+logger:
+safe_mode:
+```
+
+## Platform Support
+
+| Backend file | Platforms |
+|---|---|
+| `ota_backend_esp_idf.cpp` | ESP32 (Arduino + IDF) |
+| `ota_backend_esp8266.cpp` | ESP8266 (Arduino) |
+| `ota_backend_arduino_rp2040.cpp` | RP2040 (Arduino) |
+| `ota_backend_arduino_libretiny.cpp` | BK72xx, RTL87xx, LN882x (Arduino) |
+
+<Note>
+On ESP32 targets, the `watchdog` component is also automatically loaded alongside OTA to ensure the device recovers if the OTA process hangs.
+</Note>

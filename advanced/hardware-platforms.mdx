@@ -1,0 +1,329 @@
+---
+title: "Supported Hardware Platforms and Configuration"
+sidebarTitle: "Hardware Platforms"
+description: "Configure ESP32, ESP8266, RP2040, BK72xx, and the host platform in ESPHome — variants, frameworks, boards, and key YAML options explained."
+---
+
+ESPHome targets a wide range of microcontrollers through a platform abstraction layer. Each platform is declared with a top-level YAML key (`esp32:`, `esp8266:`, `rp2040:`, `bk72xx:`, or `host:`) that specifies the board, variant, framework, and related build options. This page documents the supported platforms, their configuration schemas, and practical examples for each.
+
+## Platform Capabilities at a Glance
+
+| Platform | Framework options | Wi-Fi | Bluetooth | Arduino | ESP-IDF |
+|----------|-------------------|-------|-----------|---------|---------|
+| ESP32 | Arduino, ESP-IDF | ✅ | ✅ (most variants) | ✅ | ✅ |
+| ESP8266 | Arduino | ✅ | ❌ | ✅ | ❌ |
+| RP2040 | Arduino | ✅ (board-dependent) | ✅ (board-dependent) | ✅ | ❌ |
+| BK72xx | Arduino (LibreTiny) | ✅ | ❌ | ✅ | ❌ |
+| Host | Native | ❌ | ❌ | ❌ | ❌ |
+
+---
+
+## ESP32
+
+The `esp32:` block targets Espressif's ESP32 family and is the most feature-rich platform in ESPHome. It supports both the **Arduino** framework (via pioarduino/arduino-esp32) and **ESP-IDF** (via pioarduino/esp-idf). The platform is defined in `esphome/components/esp32/__init__.py`.
+
+### Variants
+
+The `variant:` key selects the chip die. ESPHome auto-detects the variant from the `board:` name when possible. Supported values (from `esp32/const.py`):
+
+| Value | Chip |
+|-------|------|
+| `ESP32` | Original dual-core Xtensa |
+| `ESP32S2` | Single-core Xtensa, USB-OTG |
+| `ESP32S3` | Dual-core Xtensa, USB-OTG, AI accelerator |
+| `ESP32C2` | Single-core RISC-V, budget |
+| `ESP32C3` | Single-core RISC-V |
+| `ESP32C5` | Single-core RISC-V, Wi-Fi 6 |
+| `ESP32C6` | Single-core RISC-V, Wi-Fi 6, Thread/Matter |
+| `ESP32H2` | RISC-V, Thread/Zigbee only (no Wi-Fi) |
+| `ESP32P4` | High-performance dual-core RISC-V |
+
+### Framework: Arduino
+
+```yaml
+esp32:
+  board: esp32dev          # PlatformIO board ID; auto-sets variant to ESP32
+  variant: ESP32           # optional if board is known
+  framework:
+    type: arduino
+    version: recommended   # or a specific version string, e.g. "3.1.1"
+```
+
+### Framework: ESP-IDF
+
+```yaml
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  flash_size: 4MB          # 2MB, 4MB, 8MB, 16MB, 32MB; default 4MB
+  framework:
+    type: esp-idf
+    version: recommended   # or e.g. "5.3.2"
+    sdkconfig_options:
+      CONFIG_FREERTOS_UNICORE: "n"
+      CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240: "y"
+    advanced:
+      compiler_optimization: SIZE     # NONE, DEBUG, SIZE, PERF
+      ignore_efuse_mac_crc: false
+      enable_idf_experimental_features: false
+      watchdog_timeout: 5s            # 5s–60s
+```
+
+<Note>
+`sdkconfig_options` values must be quoted strings in YAML even when they represent booleans. Espressif's Kconfig system uses `"y"` / `"n"` rather than YAML booleans.
+</Note>
+
+### Flash Size and Partitions
+
+```yaml
+esp32:
+  board: esp32dev
+  flash_size: 4MB          # default; also 2MB, 8MB, 16MB, 32MB
+  partitions: partitions.csv   # path to a custom partition table CSV file
+  framework:
+    type: esp-idf
+```
+
+<Warning>
+Do not set `board_build.partitions` in `platformio_options` when `partitions:` is specified inside the `esp32:` block — ESPHome will raise a validation error to prevent conflicting partition configurations.
+</Warning>
+
+### Minimal Arduino Example
+
+```yaml
+esphome:
+  name: my-esp32
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+### Minimal ESP-IDF Example
+
+```yaml
+esphome:
+  name: my-s3
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: ESP32S3
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+    version: recommended
+    sdkconfig_options:
+      CONFIG_SPIRAM_SUPPORT: "y"
+```
+
+---
+
+## ESP8266
+
+The `esp8266:` block targets the original Espressif ESP8266. Only the Arduino framework is supported. The platform is defined in `esphome/components/esp8266/__init__.py`.
+
+### Configuration Schema
+
+```yaml
+esp8266:
+  board: d1_mini            # required; any PlatformIO espressif8266 board ID
+  restore_from_flash: false # persist component state to flash; default false
+  board_flash_mode: dout    # qio, qout, dio, dout; default dout
+  framework:
+    version: recommended    # or a specific arduino-esp8266 version
+  early_pin_init: true      # initialise GPIO pins before setup(); default true
+  enable_full_printf: false # include float support in printf; adds ~8KB flash
+```
+
+### Common Boards
+
+| Board ID | Description |
+|----------|-------------|
+| `esp01_1m` | ESP-01 module, 1 MB flash, minimal pins |
+| `d1_mini` | Wemos D1 Mini, USB-serial, breadboard-friendly |
+| `nodemcuv2` | NodeMCU v2, 30-pin devkit |
+| `esp12e` | Bare ESP-12E/F module |
+
+### Example
+
+```yaml
+esphome:
+  name: my-esp8266
+
+esp8266:
+  board: d1_mini
+  restore_from_flash: true
+  framework:
+    version: recommended
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+<Tip>
+Enable `restore_from_flash: true` when using components like `switch` with `restore_mode: RESTORE_DEFAULT_OFF` — otherwise state is lost on every power cycle. Be aware that frequent writes shorten flash lifetime; use `save_preferences_timeout` to batch writes.
+</Tip>
+
+---
+
+## RP2040
+
+The `rp2040:` block targets Raspberry Pi's RP2040 and RP2350 microcontrollers via the Arduino-Pico framework. The platform is defined in `esphome/components/rp2040/__init__.py`.
+
+### Configuration Schema
+
+```yaml
+rp2040:
+  board: rpipicow            # PlatformIO board ID; default for RP2040 variant
+  variant: RP2040            # RP2040 or RP2350
+  framework:
+    version: recommended     # or a specific arduino-pico version
+    platform_version: "v1.4.0-gcc14-arduinopico460"  # Raspberry Pi platform version
+  watchdog_timeout: 8388ms   # hardware watchdog timeout
+  enable_full_printf: false  # printf float support
+```
+
+<Note>
+Either `board:` or `variant:` must be specified. When both are given ESPHome validates that they are consistent. Unknown boards default `variant` to the value inferred from the board map.
+</Note>
+
+### Common Boards
+
+| Board ID | Description |
+|----------|-------------|
+| `rpipico` | Raspberry Pi Pico (no wireless) |
+| `rpipicow` | Raspberry Pi Pico W (CYW43 Wi-Fi + BT) |
+| `rpipico2w` | Raspberry Pi Pico 2 W (RP2350, Wi-Fi) |
+| `adafruit_feather` | Adafruit Feather RP2040 |
+
+### Example
+
+```yaml
+esphome:
+  name: pico-w-sensor
+
+rp2040:
+  board: rpipicow
+  framework:
+    version: recommended
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+<Note>
+Wi-Fi is only available on boards that include the CYW43 wireless chip (such as `rpipicow`). ESPHome checks `board_has_wifi()` from the board map and will raise an error if you configure `wifi:` on a board without wireless hardware.
+</Note>
+
+---
+
+## BK72xx / LibreTiny
+
+The `bk72xx:` block targets Beken BK72xx chips found in many Tuya and CB3S-based smart home products. It uses the [LibreTiny](https://github.com/libretiny-eu/libretiny) Arduino framework. The platform is defined in `esphome/components/bk72xx/__init__.py` (auto-generated) and delegates to `esphome/components/libretiny/__init__.py`.
+
+### Configuration Schema
+
+```yaml
+bk72xx:
+  board: cb2s              # LibreTiny board ID
+  framework:
+    version: recommended   # or "dev", "latest", or explicit e.g. "1.12.1"
+    loglevel: warn         # NONE, ERROR, WARN, INFO, DEBUG, VERBOSE
+    sdk_silent: all        # suppress SDK serial output: all, auto, none
+    gpio_recover: true     # attempt GPIO recovery on boot
+    options:               # raw LibreTiny SDK options
+      UART_BAUD_RATE: "115200"
+```
+
+### Common Chips and Boards
+
+| Chip | Board IDs | Typical product |
+|------|-----------|----------------|
+| BK7231T | `wb3s`, `wb2s`, `cb3s` | Generic Tuya smart plugs, switches |
+| BK7231N | `cb2s`, `cb2l`, `generic-bk7231n-qfn32-tuya` | Newer Tuya modules |
+
+### Example
+
+```yaml
+esphome:
+  name: tuya-plug
+
+bk72xx:
+  board: cb2s
+  framework:
+    version: recommended
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+<Warning>
+BK72xx devices are typically flashed via a UART interface or with the [ltchiptool](https://github.com/libretiny-eu/ltchiptool) utility — not through the standard ESPHome serial flasher. Consult the LibreTiny documentation for device-specific flashing instructions.
+</Warning>
+
+---
+
+## Host Platform
+
+The `host:` platform compiles ESPHome as a native Linux/macOS binary, running entirely on the development machine without any microcontroller hardware. It is useful for testing component logic, CI pipelines, and rapid iteration. The platform is defined in `esphome/components/host/__init__.py`.
+
+### Configuration Schema
+
+```yaml
+host:
+  mac_address: "98:35:69:ab:f6:79"  # simulated MAC; default 98:35:69:ab:f6:79
+```
+
+### Example
+
+```yaml
+esphome:
+  name: host-test
+
+host:
+  mac_address: "01:02:03:04:05:06"
+
+logger:
+  level: DEBUG
+```
+
+Build and run with:
+
+```bash
+esphome run host-test.yaml
+```
+
+<Note>
+The host platform uses `platformio/native` and compiles with `gnu++20`. Components that depend on hardware peripherals (GPIO, I²C, SPI, etc.) are not available or are stubbed. It is primarily useful for testing pure-logic components and MQTT/API integrations against a local broker.
+</Note>
+
+---
+
+## Choosing a Framework for ESP32
+
+<Accordion title="Arduino vs ESP-IDF: which should I use?">
+
+**Arduino framework** (`type: arduino`):
+
+- Simpler setup; most third-party libraries target Arduino
+- Slightly higher memory overhead due to the Arduino HAL layer
+- Recommended for most general-purpose ESPHome projects
+
+**ESP-IDF framework** (`type: esp-idf`):
+
+- Direct access to Espressif's IoT Development Framework APIs
+- Required for some advanced features: Matter/Thread (via OpenThread), advanced Bluetooth stack, PSRAM, OTA rollback
+- Finer control over `sdkconfig_options` for memory and power optimization
+- Recommended when you need maximum performance or specific IDF components
+
+You can switch between frameworks by changing `type:` — no other YAML changes are needed for most components.
+
+</Accordion>

@@ -1,0 +1,204 @@
+---
+title: "Logger Component Configuration in ESPHome"
+sidebarTitle: "Logger"
+description: "Configure serial and USB logging levels, per-component filtering, hardware UART selection, and the on_message automation trigger in ESPHome."
+---
+
+The ESPHome `logger` component controls how your device emits diagnostic messages — over a serial UART, USB CDC, or USB Serial JTAG interface. This page covers global and per-tag log levels, hardware UART selection, disabling serial output entirely, the `on_message` automation trigger, and how to read logs from the `esphome` CLI.
+
+## Basic Configuration
+
+```yaml
+logger:
+  level: DEBUG
+  baud_rate: 115200
+```
+
+Adding `logger:` with no options uses the defaults (115200 baud, DEBUG level, hardware UART auto-selected by chip).
+
+## Configuration Variables
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `baud_rate` | integer | `115200` | Serial baud rate. Set to `0` to disable serial logging entirely. |
+| `tx_buffer_size` | integer | `512` | Transmit buffer size in bytes. Minimum 160, maximum 65535. |
+| `hardware_uart` | string | *chip-dependent* | UART peripheral to use. See [UART Selection](#uart-selection) below. |
+| `level` | string | `DEBUG` | Global minimum log level. See [Log Levels](#log-levels). |
+| `logs` | map | `{}` | Per-tag log level overrides. Keys are tag strings, values are log levels. |
+| `initial_level` | string | same as `level` | The level active at boot before any runtime changes. Must not be less severe than `level`. |
+| `runtime_tag_levels` | boolean | `false` | Compile in support for changing per-tag levels at runtime even without a `logs:` map. |
+| `deassert_rts_dts` | boolean | `false` | Deassert RTS/DTR lines on boot (useful for boards that reset when these lines toggle). |
+| `task_log_buffer_size` | integer | `768` | Size of the per-task log buffer (ESP32, BK72xx, LN882x, RTL87xx, nRF52 only). Set to `0` to disable. |
+
+## Log Levels
+
+ESPHome defines a strict severity hierarchy. Setting a level compiles out all less-severe messages from the firmware binary — reducing flash usage as well as runtime noise.
+
+| Level | Numeric | Description |
+|-------|---------|-------------|
+| `NONE` | 0 | No log output at all. |
+| `ERROR` | 1 | Fatal and recoverable error conditions. |
+| `WARN` | 2 | Unexpected states that are not necessarily errors. |
+| `INFO` | 3 | High-level operational messages (default for most components). |
+| `CONFIG` | 4 | Component configuration dump at startup. |
+| `DEBUG` | 5 | Detailed operational data. **Default global level.** |
+| `VERBOSE` | 6 | Very detailed output; enables extra debug builds on ESP8266/ESP32. |
+| `VERY_VERBOSE` | 7 | Maximum verbosity; enables I²C debug buffers on ESP32. |
+
+<Warning>
+Per-tag levels set in `logs:` cannot be **less severe** than the global `level`. For example, if `level: INFO`, you cannot set a tag to `DEBUG` — that tag would exceed the compiled log ceiling.
+</Warning>
+
+## Per-Component Log Levels
+
+Use the `logs:` map to adjust verbosity for specific component tags independently of the global level:
+
+```yaml
+logger:
+  level: INFO
+  logs:
+    wifi: WARN          # suppress verbose Wi-Fi connection messages
+    sensor: DEBUG       # extra detail for sensor readings
+    my_component: VERBOSE
+```
+
+The tag string matches the `TAG` constant defined inside each ESPHome component (e.g., `"wifi"`, `"sensor"`, `"ota"`).
+
+<Tip>
+When `logs:` entries are present (or `runtime_tag_levels: true`), ESPHome compiles in the `USE_LOGGER_RUNTIME_TAG_LEVELS` feature, enabling the `logger.set_level` action at runtime.
+</Tip>
+
+### Runtime Level Changes
+
+You can change the global level or a specific tag's level at runtime using the `logger.set_level` action:
+
+```yaml
+on_...:
+  then:
+    # Change the global level
+    - logger.set_level: DEBUG
+
+    # Change a specific tag's level
+    - logger.set_level:
+        tag: "wifi"
+        level: WARN
+```
+
+### Emitting Log Messages in Automations
+
+Use `logger.log` to write formatted messages from any automation:
+
+```yaml
+on_...:
+  then:
+    - logger.log:
+        format: "Temperature is %.1f°C"
+        args: ["id(my_temp_sensor).state"]
+        level: INFO
+        tag: "main"
+```
+
+`format` follows C `printf` syntax. `level` defaults to `DEBUG`, `tag` defaults to `"main"`.
+
+## UART Selection
+
+The `hardware_uart` option selects which hardware peripheral ESPHome uses for serial logging. Defaults vary by chip:
+
+| Platform / Variant | Default | Available options |
+|---|---|---|
+| ESP8266 | `UART0` | `UART0`, `UART0_SWAP`, `UART1` |
+| ESP32 (classic) | `UART0` | `UART0`, `UART1`, `UART2` |
+| ESP32-C2 | `UART0` | `UART0`, `UART1` |
+| ESP32-C3/C5/C6/H2/S3 | `USB_SERIAL_JTAG` | `UART0`, `UART1`, `USB_CDC`, `USB_SERIAL_JTAG` |
+| ESP32-S2 | `USB_CDC` | `UART0`, `UART1`, `USB_CDC` |
+| RP2040 | `USB_CDC` | `USB_CDC`, `UART0`, `UART1` |
+| BK72xx / RTL87xx / LN882x | `DEFAULT` | `DEFAULT`, `UART0`, `UART1`, `UART2` |
+| nRF52 | `USB_CDC` | `USB_CDC`, `UART0` |
+
+```yaml
+logger:
+  hardware_uart: UART1   # route logs to the second UART
+```
+
+<Note>
+`USB_SERIAL_JTAG` and `USB_CDC` do not require a USB-to-UART adapter — they expose a virtual serial port directly from the chip's USB interface.
+</Note>
+
+## Disabling Serial Logging
+
+Set `baud_rate: 0` to prevent the logger from initialising any serial hardware. Log messages are still captured in memory (for `on_message` triggers and the web server log stream) but nothing is written to any UART.
+
+```yaml
+logger:
+  baud_rate: 0
+  level: INFO
+```
+
+This is useful on battery-powered devices where any active peripheral increases idle current draw, or on devices where the UART pins are needed for other purposes.
+
+## The `on_message` Trigger
+
+`on_message` fires every time a log message is emitted at or above the specified threshold. It receives three parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `level` | `uint8_t` | Numeric log level of the message. |
+| `tag` | `const char *` | Component tag string. |
+| `message` | `const char *` | Formatted log message text. |
+
+```yaml
+logger:
+  level: DEBUG
+  on_message:
+    level: ERROR          # only fire for ERROR and above
+    then:
+      - homeassistant.service:
+          service: notify.mobile_app_phone
+          data_template:
+            message: "ESPHome error on {{ tag }}: {{ message }}"
+```
+
+Multiple `on_message` entries are supported; each adds one listener slot compiled into the firmware.
+
+<Note>
+`on_message` listeners are counted at compile time. The firmware allocates exactly as many listener slots as there are `on_message` entries. Unused listener infrastructure is not compiled in.
+</Note>
+
+## Reading Logs from the CLI
+
+<Steps>
+  <Step title="Attach to a running device">
+    Stream logs from a device already on the network:
+    ```bash
+    esphome logs device.yaml
+    ```
+    ESPHome connects over mDNS/IP and streams the serial output to your terminal.
+  </Step>
+
+  <Step title="Compile, upload, and stream in one command">
+    The `run` command compiles the firmware, uploads it (OTA or serial), then immediately attaches to the log stream:
+    ```bash
+    esphome run device.yaml
+    ```
+    This is the standard development loop — make a change, run, watch the logs.
+  </Step>
+</Steps>
+
+## Full Example
+
+```yaml
+logger:
+  baud_rate: 115200
+  tx_buffer_size: 1024
+  hardware_uart: UART0
+  level: DEBUG
+  logs:
+    wifi: WARN
+    ota: INFO
+    sensor: VERBOSE
+  on_message:
+    level: WARN
+    then:
+      - lambda: |-
+          ESP_LOGI("monitor", "Caught: [%s] %s", tag, message);
+```

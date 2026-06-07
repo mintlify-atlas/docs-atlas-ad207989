@@ -1,0 +1,265 @@
+---
+title: "ESPHome Dashboard: Web UI Launch and Configuration"
+sidebarTitle: "Dashboard"
+description: "Run the ESPHome web dashboard to manage, edit, compile, and flash devices from a browser. Covers flags, auth, HA add-on mode, REST API, and systemd setup."
+---
+
+The ESPHome dashboard is a browser-based management interface that lets you view all your YAML configurations in one place, check device online/offline status, edit configs, compile firmware, upload over the air, and stream logs — all without touching the command line for everyday tasks. This page covers how to launch the dashboard, configure authentication, integrate with Home Assistant, and run it as a background service.
+
+## Launching the Dashboard
+
+```bash
+esphome dashboard <config-directory> [flags]
+```
+
+The `<config-directory>` positional argument is the path to the folder containing your YAML configuration files. The dashboard watches this directory and displays every `.yaml` file it finds.
+
+**Basic launch:**
+
+```bash
+esphome dashboard ./config/
+```
+
+**With a custom port and automatic browser open:**
+
+```bash
+esphome dashboard ./config/ --port 6052 --open-ui
+```
+
+Once started, open `http://localhost:6052` (or whichever address and port you configured) in any browser.
+
+## Dashboard Flags
+
+All flags are parsed from the `dashboard` subparser in `esphome/__main__.py`.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--port PORT` | int | `6052` | HTTP port to listen on. |
+| `--address ADDR` | str | `0.0.0.0` | Network interface address to bind to. Use `127.0.0.1` to restrict to localhost. |
+| `--username USER` | str | `""` (disabled) | Username required for HTTP Basic authentication. |
+| `--password PASS` | str | `""` (disabled) | Password required for HTTP Basic authentication. |
+| `--open-ui` | flag | off | Automatically open the dashboard URL in the system default browser after startup. |
+| `--socket PATH` | str | — | Serve over a Unix domain socket instead of a TCP port (useful behind a reverse proxy). |
+| `--ha-addon` | flag | off | Enable Home Assistant add-on mode (see below). This flag is intentionally hidden from `--help`. |
+
+<Note>
+When neither `--username` nor `--password` is provided, the dashboard is accessible without any login prompt. In that case the `XSRF` cookie protection is also disabled. Always set credentials if the dashboard is reachable from untrusted networks.
+</Note>
+
+## Authentication
+
+The dashboard supports HTTP Basic authentication. Enable it by providing both `--username` and `--password`. When authentication is active:
+
+- Unauthenticated requests to any page are redirected to the `/login` route.
+- The API client (browser) can authenticate either via a session cookie (set on successful login) or by sending an `Authorization: Basic <base64>` header directly.
+- Passwords are compared using `hmac.compare_digest` to prevent timing attacks.
+
+```bash
+# Launch with auth enabled
+esphome dashboard ./config/ \
+  --username admin \
+  --password mysecretpassword
+```
+
+<Warning>
+Credentials can also be supplied through the `USERNAME` and `PASSWORD` environment variables, which the `settings.parse_args()` function checks as a fallback. Prefer environment variables over shell history when running the dashboard in scripts or containers.
+</Warning>
+
+Alternatively, you can set the password at launch time via environment variables:
+
+```bash
+USERNAME=admin PASSWORD=mysecretpassword esphome dashboard ./config/
+```
+
+## Home Assistant Add-on Mode
+
+When ESPHome runs as a Home Assistant supervised add-on, pass `--ha-addon` to enable add-on mode:
+
+```bash
+esphome dashboard /config/esphome/ --ha-addon
+```
+
+In this mode:
+
+- Authentication is delegated to Home Assistant's Ingress system. Requests that carry the `X-HA-Ingress: YES` header are automatically considered authenticated.
+- The `DISABLE_HA_AUTHENTICATION` environment variable can be set to `true` to bypass HA authentication (for debugging only).
+- The dashboard URL is served under a relative prefix managed by the `ESPHOME_DASHBOARD_RELATIVE_URL` environment variable.
+- The login form is replaced by the HA Ingress authentication flow.
+
+<Note>
+The `--ha-addon` flag is intentionally omitted from `esphome dashboard --help` because it is intended for the add-on supervisor, not end users. Manual invocation of this flag outside of a supervised environment will result in unexpected authentication behavior.
+</Note>
+
+## Environment Variables
+
+Several dashboard behaviors are controlled by environment variables rather than CLI flags:
+
+| Variable | Description |
+|---|---|
+| `ESPHOME_DASHBOARD_RELATIVE_URL` | URL prefix for all routes (e.g., `/esphome/`). Useful behind a reverse proxy. |
+| `ESPHOME_DASHBOARD_USE_MQTT` | Set to `true` to use MQTT for device ping/online status instead of mDNS. |
+| `ESPHOME_STREAMER_MODE` | Set to `true` to hide sensitive values in the UI ("streamer mode"). |
+| `ESPHOME_TRUSTED_DOMAINS` | Comma-separated list of hostnames allowed as WebSocket origins for reverse-proxy setups. |
+| `ESPHOME_DASHBOARD_DEV` | Set to `true` to enable debug mode (disables static file caching). |
+| `USERNAME` | Fallback dashboard username (used when `--username` is empty). |
+| `PASSWORD` | Fallback dashboard password (used when `--password` is empty). |
+| `DISABLE_HA_AUTHENTICATION` | Set to `true` to disable HA Ingress auth in `--ha-addon` mode. |
+
+## Unix Socket Mode
+
+For deployments behind a reverse proxy (nginx, Caddy, etc.), the dashboard can listen on a Unix domain socket instead of a TCP port:
+
+```bash
+esphome dashboard ./config/ --socket /run/esphome/dashboard.sock
+```
+
+The socket is created with mode `0o666` so the web server process can write to it. The socket file is automatically removed when the dashboard exits cleanly.
+
+<Tip>
+Using a Unix socket removes the need to expose a TCP port and allows the reverse proxy to communicate with the dashboard using file-system permissions instead of network ACLs.
+</Tip>
+
+## What the Dashboard Provides
+
+<Accordion title="Device list and status">
+The main page shows every YAML file in the configured directory as a card. Each card displays the device name, ESPHome version, target platform, and a live **online / offline** indicator polled via the `/ping` endpoint or MQTT (when `ESPHOME_DASHBOARD_USE_MQTT=true`).
+</Accordion>
+
+<Accordion title="In-browser editor">
+Click the edit icon on any device card to open the built-in YAML editor powered by the ACE editor. Changes are saved via `POST /edit?configuration=<file>` and can be validated immediately from the UI.
+</Accordion>
+
+<Accordion title="Compile, upload, and run">
+Each card exposes **Validate**, **Compile**, **Upload**, and **Run** actions. These actions open a WebSocket connection to the dashboard and stream the `esphome` subprocess output in real time directly in the browser. The underlying WebSocket endpoints are `/validate`, `/compile`, `/upload`, and `/run`.
+</Accordion>
+
+<Accordion title="Live log viewer">
+The **Logs** action streams device output over the `/logs` WebSocket endpoint. The dashboard passes the selected serial port (retrieved from `/serial-ports`) or the network address to the underlying `esphome logs` subprocess.
+</Accordion>
+
+<Accordion title="Firmware download">
+Compiled binaries can be downloaded directly from the dashboard. Use `GET /download.bin?configuration=<file>` to fetch the latest compiled firmware for a device. `GET /downloads?configuration=<file>` lists all available download variants.
+</Accordion>
+
+<Accordion title="Prometheus service discovery">
+The `/prometheus-sd` endpoint returns a Prometheus HTTP SD payload listing all configured devices with labels for platform, ESPHome version, and loaded integrations. This allows a Prometheus scraper to automatically discover ESPHome device web server endpoints.
+</Accordion>
+
+## Dashboard REST API
+
+The dashboard exposes a set of HTTP endpoints served by the Tornado web framework. All endpoints require authentication when `--username` / `--password` is configured.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/` | Main dashboard HTML page. |
+| `GET` | `/login` | Login form. |
+| `GET` | `/logout` | Clear session cookie and redirect to login. |
+| `GET` | `/devices` | JSON list of all devices and their current state. |
+| `GET` | `/ping` | JSON map of `filename → online_bool` for all devices. |
+| `GET` | `/info?configuration=<file>` | JSON metadata for a single device (from build storage). |
+| `GET` | `/edit?configuration=<file>` | Read the raw YAML content of a config file. |
+| `POST` | `/edit?configuration=<file>` | Write (save) a config file. |
+| `GET` | `/serial-ports` | JSON list of detected serial ports on the host. |
+| `GET` | `/version` | JSON `{"version": "<esphome-version>"}`. |
+| `GET` | `/downloads?configuration=<file>` | List downloadable firmware variants. |
+| `GET` | `/download.bin?configuration=<file>` | Download the compiled firmware binary. |
+| `POST` | `/import` | Import a device configuration from a discovered device. |
+| `POST` | `/wizard` | Generate a new YAML via the wizard API. |
+| `POST` | `/rename?configuration=<file>` | Rename a device (WebSocket). |
+| `POST` | `/archive?configuration=<file>` | Archive (soft-delete) a device configuration. |
+| `POST` | `/unarchive?configuration=<file>` | Restore an archived configuration. |
+| `GET` | `/secret_keys` | List secret key names defined in `secrets.yaml`. |
+| `GET` | `/json-config?configuration=<file>` | Validated config as JSON (used by the editor). |
+| `GET` | `/prometheus-sd` | Prometheus HTTP service discovery payload. |
+| `GET` | `/boards/<platform>` | JSON list of supported boards for a given platform. |
+| `POST` | `/ignore-device` | Add a discovered device to the ignore list. |
+| `WS` | `/logs` | Stream device log output. |
+| `WS` | `/compile` | Stream compile output. |
+| `WS` | `/upload` | Stream upload output. |
+| `WS` | `/run` | Stream run (compile + upload + logs) output. |
+| `WS` | `/validate` | Stream config validation output. |
+| `WS` | `/clean` | Stream clean output. |
+| `WS` | `/clean-mqtt` | Stream clean-mqtt output. |
+| `WS` | `/clean-all` | Stream clean-all output. |
+| `WS` | `/update-all` | Stream update-all output. |
+| `WS` | `/events` | Server-sent events for dashboard state changes. |
+| `WS` | `/vscode` | VS Code extension schema data. |
+| `WS` | `/ace` | ACE editor configuration data. |
+
+## Running the Dashboard as a Service
+
+For persistent deployments, run the dashboard under a process manager. Below are example configurations for **systemd** (Linux) and **Docker**.
+
+<Tabs>
+  <Tab title="systemd">
+    Create `/etc/systemd/system/esphome-dashboard.service`:
+
+    ```ini
+    [Unit]
+    Description=ESPHome Dashboard
+    After=network.target
+
+    [Service]
+    Type=simple
+    User=esphome
+    WorkingDirectory=/home/esphome
+    Environment=PASSWORD=mysecretpassword
+    ExecStart=/home/esphome/.venv/bin/esphome dashboard /home/esphome/config/ \
+        --port 6052 \
+        --address 127.0.0.1 \
+        --username admin
+    Restart=on-failure
+    RestartSec=5s
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    Enable and start the service:
+
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now esphome-dashboard
+    sudo journalctl -u esphome-dashboard -f
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run -d \
+      --name esphome-dashboard \
+      --restart unless-stopped \
+      -p 6052:6052 \
+      -v /home/user/esphome-config:/config \
+      -e USERNAME=admin \
+      -e PASSWORD=mysecretpassword \
+      ghcr.io/esphome/esphome \
+      dashboard /config/ --port 6052 --address 0.0.0.0
+    ```
+  </Tab>
+  <Tab title="Unix socket + nginx">
+    Run the dashboard on a socket:
+
+    ```bash
+    esphome dashboard ./config/ \
+      --socket /run/esphome/dashboard.sock \
+      --username admin \
+      --password mysecretpassword
+    ```
+
+    Then proxy from nginx:
+
+    ```nginx
+    location /esphome/ {
+        proxy_pass http://unix:/run/esphome/dashboard.sock:/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+The dashboard serves WebSocket connections for long-running operations (compile, upload, logs). Ensure your reverse proxy or load balancer is configured to forward `Upgrade: websocket` headers and does not impose short idle timeouts on WebSocket connections.
+</Warning>

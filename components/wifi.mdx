@@ -1,0 +1,454 @@
+---
+title: "Wi-Fi Component — Connect ESPHome Devices to WLAN"
+sidebarTitle: "Wi-Fi"
+description: "Configure Wi-Fi connectivity for ESPHome devices. Covers single and multiple networks, AP mode, static IP, EAP enterprise auth, power saving, and automation triggers."
+---
+
+The `wifi:` component is the primary networking layer for ESPHome devices on ESP32, ESP8266, BK72xx, and RP2040 platforms. This page covers every supported configuration option — from a simple home network to enterprise WPA2-Enterprise setups, static IP addressing, fallback Access Point mode, and automation triggers that fire when the link state changes.
+
+<Note>
+ESP32-H2 and ESP32-P4 do **not** have a native Wi-Fi PHY. Those variants require the `esp32_hosted` co-processor component to use `wifi:`. All other ESP32 variants, ESP8266, BK72xx, and Wi-Fi-capable RP2040 boards (e.g. `rpipicow`) work out of the box.
+</Note>
+
+---
+
+## Basic Configuration
+
+The simplest form puts the SSID and password directly under `wifi:`. ESPHome automatically promotes this to an internal `networks:` list.
+
+```yaml
+wifi:
+  ssid: "MyHomeNetwork"
+  password: "supersecret"
+```
+
+<Tip>
+Store credentials in `secrets.yaml` and reference them with `!secret wifi_ssid` and `!secret wifi_password` to keep sensitive data out of your main config file.
+</Tip>
+
+---
+
+## Complete Annotated Example
+
+The following example showcases the full feature set in one place. Individual sections below explain each group of options.
+
+```yaml
+wifi:
+  # ── Primary network (shorthand) ──────────────────────────────────────────
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # ── Multiple networks (priority-ordered fallback) ─────────────────────────
+  networks:
+    - ssid: "OfficeNetwork"
+      password: !secret office_pass
+      priority: 10          # Higher number = tried first
+    - ssid: "GuestNetwork"
+      password: !secret guest_pass
+      priority: 0
+      bssid: AA:BB:CC:DD:EE:FF   # Lock to a specific access point
+      hidden: false
+
+  # ── Static IP (optional; omit for DHCP) ──────────────────────────────────
+  manual_ip:
+    static_ip: 192.168.1.42
+    gateway:   192.168.1.1
+    subnet:    255.255.255.0
+    dns1:      1.1.1.1
+    dns2:      8.8.8.8
+
+  # ── Fallback Access Point ─────────────────────────────────────────────────
+  ap:
+    ssid:     "Fallback Hotspot"
+    password: "fallback123"
+    # ap_timeout defaults to 90s before AP activates after station fails
+
+  # ── Power management ──────────────────────────────────────────────────────
+  power_save_mode: light   # none | light | high
+
+  # ── Misc options ──────────────────────────────────────────────────────────
+  fast_connect: false          # Skip full scan, connect directly to first SSID
+  reboot_timeout: 15min        # Reboot if no connection after this period
+  output_power: 20.0dB         # TX power 8.5–20.5 dBm (ESP8266 / ESP32)
+  domain: .local               # mDNS domain suffix
+  use_address: 192.168.1.42    # Override address used to reach the device
+
+  # ── Automation triggers ───────────────────────────────────────────────────
+  on_connect:
+    - logger.log: "Wi-Fi connected!"
+  on_disconnect:
+    - logger.log: "Wi-Fi lost — waiting for reconnect"
+```
+
+---
+
+## Configuration Variables
+
+### Top-Level Keys
+
+<ParamField path="ssid" type="string">
+  SSID of a single network. Mutually exclusive with `networks:`. Automatically moved to the `networks:` list internally.
+</ParamField>
+
+<ParamField path="password" type="string">
+  WPA password for the network specified by `ssid:`. Must be 8–64 characters long.
+</ParamField>
+
+<ParamField path="networks" type="list">
+  List of networks to try, in priority order. Each entry accepts the keys described in [Network Entry Variables](#network-entry-variables) below.
+</ParamField>
+
+<ParamField path="ap" type="map">
+  Activate a fallback software Access Point when the station cannot connect. Accepts `ssid`, `password`, `channel`, `manual_ip`, and `ap_timeout`. See [Access Point Mode](#access-point-mode).
+</ParamField>
+
+<ParamField path="manual_ip" type="map">
+  Assign a static IP to the station interface. See [Static IP](#static-ip).
+</ParamField>
+
+<ParamField path="power_save_mode" type="string" default="light (ESP32/RP2040), none (ESP8266/BK72xx)">
+  Wi-Fi power-save mode. One of `none`, `light`, or `high`.
+</ParamField>
+
+<ParamField path="fast_connect" type="boolean" default="false">
+  Skip a full channel scan and connect directly using only the SSID/BSSID from the first network entry. Reduces connection time but prevents automatic channel hopping.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="time period" default="15min">
+  Reboot the device if it cannot establish a Wi-Fi connection within this duration.
+</ParamField>
+
+<ParamField path="output_power" type="decibels" default="20.0 (ESP8266)">
+  Transmit power in dBm. Accepted range is 8.5–20.5 dBm. Reducing this can lower current draw on battery-powered nodes.
+</ParamField>
+
+<ParamField path="domain" type="string" default=".local">
+  mDNS domain appended to the device name to form the default use address (e.g. `mydevice.local`).
+</ParamField>
+
+<ParamField path="use_address" type="string">
+  Override the hostname or IP address ESPHome uses to reach this device. Useful when `manual_ip` is not set but you have a DHCP reservation.
+</ParamField>
+
+<ParamField path="min_auth_mode" type="string" default="WPA2">
+  Minimum authentication mode required. One of `WPA`, `WPA2`, or `WPA3`. ESP32 and ESP8266 only.
+</ParamField>
+
+<ParamField path="enable_on_boot" type="boolean" default="true">
+  Whether Wi-Fi is enabled when the device boots. Set to `false` to start with Wi-Fi off and enable it via automation.
+</ParamField>
+
+<ParamField path="passive_scan" type="boolean" default="false">
+  Use passive scanning (listen-only) instead of sending probe requests. Reduces RF noise.
+</ParamField>
+
+<ParamField path="enable_btm" type="boolean" default="false">
+  Enable 802.11v BSS Transition Management for seamless roaming. ESP32 only.
+</ParamField>
+
+<ParamField path="enable_rrm" type="boolean" default="false">
+  Enable 802.11k Radio Resource Management for assisted roaming. ESP32 only.
+</ParamField>
+
+<ParamField path="on_connect" type="automation">
+  Trigger automation when the device successfully connects to a Wi-Fi network.
+</ParamField>
+
+<ParamField path="on_disconnect" type="automation">
+  Trigger automation when the device loses its Wi-Fi connection.
+</ParamField>
+
+---
+
+### Network Entry Variables
+
+Used inside the `networks:` list.
+
+<ParamField path="ssid" type="string" required>
+  The network SSID.
+</ParamField>
+
+<ParamField path="password" type="string">
+  WPA passphrase (8–64 characters). Omit for open networks.
+</ParamField>
+
+<ParamField path="priority" type="integer" default="0">
+  Connection priority. Higher values are tried first. Range: −128 to 127.
+</ParamField>
+
+<ParamField path="bssid" type="MAC address">
+  Lock the connection to a specific access point by its MAC address.
+</ParamField>
+
+<ParamField path="hidden" type="boolean">
+  Set to `true` to connect to a hidden (non-broadcasting) SSID.
+</ParamField>
+
+<ParamField path="channel" type="integer">
+  Force a specific Wi-Fi channel (1–14).
+</ParamField>
+
+<ParamField path="manual_ip" type="map">
+  Per-network static IP override. Same schema as the top-level `manual_ip:`.
+</ParamField>
+
+<ParamField path="eap" type="map">
+  WPA2-Enterprise (EAP) credentials. See [Enterprise Authentication](#enterprise-eap-authentication).
+</ParamField>
+
+---
+
+## Multiple Networks
+
+List as many networks as you need. ESPHome sorts them by `priority` and attempts each in order.
+
+```yaml
+wifi:
+  networks:
+    - ssid: "PrimarySSID"
+      password: !secret primary_pass
+      priority: 10
+    - ssid: "BackupSSID"
+      password: !secret backup_pass
+      priority: 5
+    - ssid: "EmergencyOpenNet"
+      priority: 0
+```
+
+---
+
+## Access Point Mode
+
+When the device cannot reach any configured network for `ap_timeout` (default 90 s), it brings up a soft AP. Pair with `captive_portal:` or `web_server:` to provide a browser-accessible configuration UI.
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  ap:
+    ssid: "ESPHome Device"
+    password: "configureme"
+
+captive_portal:
+```
+
+<Warning>
+If `ap:` is configured without `captive_portal:` or `web_server:`, ESPHome will warn that the AP is not usable for configuration.
+</Warning>
+
+### AP Static IP
+
+```yaml
+wifi:
+  ap:
+    ssid: "ESPHome AP"
+    manual_ip:
+      static_ip: 192.168.4.1
+      gateway:   192.168.4.1
+      subnet:    255.255.255.0
+```
+
+<Note>
+Manual AP IP configuration is not supported on RP2040. The AP always uses `192.168.4.1` on that platform.
+</Note>
+
+---
+
+## Static IP
+
+Assign a fixed IP to avoid DHCP negotiation delays at boot.
+
+```yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.1.100
+    gateway:   192.168.1.1
+    subnet:    255.255.255.0
+    dns1:      1.1.1.1       # optional, defaults to 0.0.0.0
+    dns2:      8.8.8.8       # optional, defaults to 0.0.0.0
+```
+
+---
+
+## Power Save Mode
+
+<Tabs>
+  <Tab title="none">
+    Maximum throughput and lowest latency. Recommended for mains-powered devices.
+
+    ```yaml
+    wifi:
+      power_save_mode: none
+    ```
+  </Tab>
+  <Tab title="light">
+    Balanced mode — the radio sleeps between beacon intervals (default on ESP32 and RP2040).
+
+    ```yaml
+    wifi:
+      power_save_mode: light
+    ```
+  </Tab>
+  <Tab title="high">
+    Aggressive sleep between beacons. Best for battery life but increases latency.
+
+    ```yaml
+    wifi:
+      power_save_mode: high
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Enterprise (EAP) Authentication
+
+WPA2-Enterprise is supported on ESP32 and ESP8266. Configure `eap:` inside a `networks:` entry.
+
+```yaml
+wifi:
+  networks:
+    - ssid: "CorpNetwork"
+      eap:
+        identity: outer@example.com      # EAP outer identity
+        username: inner@example.com      # TTLS inner username
+        password: !secret eap_password
+        # Optional certificate-based auth:
+        certificate_authority: ca.pem    # Path to CA certificate
+        certificate: client.pem         # Client certificate (inclusive with key)
+        key: client.key                 # Client private key  (inclusive with certificate)
+        ttls_phase_2: mschapv2          # pap | chap | mschap | mschapv2 | eap (ESP32 only)
+```
+
+<ParamField path="eap.identity" type="string">
+  Outer (anonymous) EAP identity sent in plaintext.
+</ParamField>
+
+<ParamField path="eap.username" type="string">
+  Inner username used for TTLS/PEAP phase-2 authentication.
+</ParamField>
+
+<ParamField path="eap.password" type="string">
+  Inner password.
+</ParamField>
+
+<ParamField path="eap.certificate_authority" type="file path">
+  Path to a PEM-encoded CA certificate used to verify the RADIUS server.
+</ParamField>
+
+<ParamField path="eap.certificate" type="file path">
+  Path to the client certificate (must be paired with `key`).
+</ParamField>
+
+<ParamField path="eap.key" type="file path">
+  Path to the client private key (must be paired with `certificate`).
+</ParamField>
+
+<ParamField path="eap.ttls_phase_2" type="string" default="mschapv2 (ESP32)">
+  TTLS inner authentication method. One of `pap`, `chap`, `mschap`, `mschapv2`, `eap`. ESP32 only.
+</ParamField>
+
+---
+
+## Automation
+
+### Triggers
+
+<Steps>
+  <Step title="on_connect">
+    Fires every time the device successfully associates with an access point.
+
+    ```yaml
+    wifi:
+      on_connect:
+        - logger.log: "Station connected"
+    ```
+  </Step>
+  <Step title="on_disconnect">
+    Fires when the association is lost.
+
+    ```yaml
+    wifi:
+      on_disconnect:
+        - logger.log: "Station disconnected — reconnecting…"
+    ```
+  </Step>
+</Steps>
+
+### Conditions
+
+| Condition | Description |
+|-----------|-------------|
+| `wifi.connected` | True when the station has an IP address |
+| `wifi.enabled` | True when the Wi-Fi radio is powered on |
+| `wifi.ap_active` | True when the fallback AP is broadcasting |
+
+```yaml
+# Example: turn on an LED only when connected
+binary_sensor:
+  - platform: template
+    name: "Wi-Fi Status"
+    lambda: "return id(wifi_component).is_connected();"
+```
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| `wifi.enable` | Power on the Wi-Fi radio |
+| `wifi.disable` | Power off the Wi-Fi radio |
+| `wifi.configure` | Dynamically change SSID / password at runtime (with optional `save:`, `timeout:`, `on_connect:`, `on_error:`) |
+
+```yaml
+# Dynamically reconfigure Wi-Fi via a service call
+api:
+  actions:
+    - action: set_wifi
+      variables:
+        new_ssid: string
+        new_pass: string
+      then:
+        - wifi.configure:
+            ssid: !lambda "return new_ssid;"
+            password: !lambda "return new_pass;"
+            save: true
+```
+
+---
+
+## Wi-Fi Info Text Sensors
+
+The `wifi_info` platform exposes live network details as text sensors.
+
+```yaml
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    ssid:
+      name: "Connected SSID"
+    bssid:
+      name: "Connected BSSID"
+    mac_address:
+      name: "MAC Address"
+    dns_address:
+      name: "DNS Address"
+```
+
+<CardGroup cols={2}>
+  <Card title="ip_address" icon="network-wired">
+    Current IPv4 address of the station interface.
+  </Card>
+  <Card title="ssid" icon="wifi">
+    SSID of the currently associated network.
+  </Card>
+  <Card title="bssid" icon="router">
+    MAC address of the connected access point.
+  </Card>
+  <Card title="mac_address" icon="microchip">
+    Device Wi-Fi MAC address (read-only hardware value).
+  </Card>
+</CardGroup>

@@ -1,0 +1,379 @@
+---
+title: "Binary Sensor Component: On/Off States in ESPHome"
+sidebarTitle: "Binary Sensor"
+description: "Configure binary (on/off) sensors in ESPHome. Covers device_class, filters, press/click/multi-click triggers, and GPIO and template platforms."
+---
+
+The `binary_sensor:` component represents any input that has exactly two states: on (true) and off (false). Physical buttons, reed switches, PIR motion detectors, door contacts, and virtual status indicators all use this component. This page covers the shared configuration schema, the filter pipeline for debouncing and inversion, every automation trigger, and popular platform examples.
+
+## Base Configuration
+
+```yaml
+binary_sensor:
+  - platform: <platform_name>
+    name: "Front Door"          # Entity name exposed to HA / MQTT
+    id: front_door              # C++ variable ID for automations
+    icon: "mdi:door-open"       # MDI icon string
+    device_class: door          # HA device class (see below)
+    entity_category: ""         # "" | diagnostic | config
+    inverted: false             # Invert the physical state before publishing
+    trigger_on_initial_state: false  # Fire triggers on first boot state
+    filters: []                 # Filter pipeline (see Filters section)
+    on_press: ...
+    on_release: ...
+    on_click: ...
+    on_double_click: ...
+    on_multi_click: ...
+    on_state: ...
+```
+
+### Device Classes
+
+`device_class` maps to Home Assistant's binary sensor device classes and determines default icon and labels.
+
+<Accordion title="Binary sensor device classes">
+
+| Value | Meaning |
+|---|---|
+| `""` (empty) | Generic binary sensor |
+| `battery` | Low battery indicator |
+| `battery_charging` | Charging state |
+| `carbon_monoxide` | CO detector |
+| `cold` | Cold temperature threshold |
+| `connectivity` | Network connectivity |
+| `door` | Door open/close |
+| `garage_door` | Garage door open/close |
+| `gas` | Gas leak detector |
+| `heat` | Overheating indicator |
+| `light` | Light detected |
+| `lock` | Lock open/closed |
+| `moisture` | Moisture / leak sensor |
+| `motion` | Motion detected |
+| `moving` | Motion (general) |
+| `occupancy` | Room occupancy |
+| `opening` | Generic opening |
+| `plug` | Plug connected |
+| `power` | Power detected |
+| `presence` | Presence detected |
+| `problem` | Problem indicator |
+| `running` | Running state |
+| `safety` | Safety alert |
+| `smoke` | Smoke detector |
+| `sound` | Sound detected |
+| `tamper` | Tamper alert |
+| `update` | Software update available |
+| `vibration` | Vibration detected |
+| `window` | Window open/close |
+
+</Accordion>
+
+---
+
+## Filters
+
+Filters modify the binary state before it is published and before triggers fire. They are evaluated in order.
+
+<AccordionGroup>
+
+<Accordion title="invert">
+
+Flip true → false and false → true. Equivalent to the top-level `inverted: true` key but can be placed anywhere in the pipeline.
+
+```yaml
+filters:
+  - invert
+```
+
+</Accordion>
+
+<Accordion title="delayed_on">
+
+Only publish `true` after the sensor has been on continuously for the given duration. Rapid glitches shorter than the delay are ignored.
+
+```yaml
+filters:
+  - delayed_on: 100ms
+```
+
+</Accordion>
+
+<Accordion title="delayed_off">
+
+Only publish `false` after the sensor has been off continuously for the given duration.
+
+```yaml
+filters:
+  - delayed_off: 500ms
+```
+
+</Accordion>
+
+<Accordion title="delayed_on_off">
+
+Apply both `delayed_on` and `delayed_off` with either a single shared time or different times per direction.
+
+```yaml
+filters:
+  - delayed_on_off: 200ms         # same delay for both
+  # or:
+  - delayed_on_off:
+      time_on: 100ms
+      time_off: 500ms
+```
+
+</Accordion>
+
+<Accordion title="settle">
+
+Ignore the initial state on boot for the given period (useful for sensors that start in an undefined state).
+
+```yaml
+filters:
+  - settle: 500ms
+```
+
+</Accordion>
+
+<Accordion title="autorepeat">
+
+While the sensor is held on, repeatedly re-fire with a configurable cadence. Useful for implementing held-button repeat. Accepts a list of stages, each with `delay`, `time_on`, and `time_off`.
+
+```yaml
+filters:
+  - autorepeat:
+      - delay: 1s
+        time_on: 900ms
+        time_off: 100ms
+      - delay: 500ms
+        time_on: 400ms
+        time_off: 100ms
+```
+
+</Accordion>
+
+<Accordion title="timeout">
+
+Publish `false` automatically after the sensor has been on for the given duration without a state change.
+
+```yaml
+filters:
+  - timeout: 5s
+```
+
+</Accordion>
+
+<Accordion title="lambda">
+
+Apply arbitrary C++ logic. Return `true`, `false`, or `{}` (drop the reading).
+
+```yaml
+filters:
+  - lambda: |-
+      if (x) return true;
+      return {};
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## Automation Triggers
+
+<CardGroup cols={2}>
+  <Card title="on_press" icon="hand-pointer">
+    Fires when the sensor transitions to `true` (on). No variables.
+  </Card>
+  <Card title="on_release" icon="hand">
+    Fires when the sensor transitions to `false` (off). No variables.
+  </Card>
+  <Card title="on_state" icon="circle-dot">
+    Fires on any state change. Variable `x` (bool) holds the new state.
+  </Card>
+  <Card title="on_click" icon="computer-mouse">
+    Fires when a press-and-release cycle falls within `min_length` (default 50 ms) and `max_length` (default 350 ms).
+  </Card>
+  <Card title="on_double_click" icon="computer-mouse">
+    Fires on two click cycles within the timing window.
+  </Card>
+  <Card title="on_multi_click" icon="hand-back-fist">
+    Fires when the sensor matches an arbitrary sequence of on/off timings.
+  </Card>
+</CardGroup>
+
+### on_click / on_double_click
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Button"
+    on_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - light.toggle: my_light
+    on_double_click:
+      min_length: 50ms
+      max_length: 350ms
+      then:
+        - light.turn_off: my_light
+```
+
+### on_multi_click
+
+`on_multi_click` lets you define a precise sequence of on/off intervals. Timings can be written as plain strings using the grammar `ON for <time> to <time>` or as structured YAML.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Button"
+    on_multi_click:
+      - timing:
+          - ON for 50ms to 350ms    # first press
+          - OFF for 50ms to 350ms   # gap
+          - ON for 50ms to 350ms    # second press
+          - OFF for at least 200ms  # final gap
+        invalid_cooldown: 1s
+        then:
+          - logger.log: "Double click confirmed"
+```
+
+<Note>
+Timing states must alternate between `ON` and `OFF`. The `invalid_cooldown` (default 1 s) is the window during which a partial match is held before being declared invalid.
+</Note>
+
+---
+
+## Platform Examples
+
+<Tabs>
+  <Tab title="GPIO Button">
+
+A physical button on GPIO0 with debounce filter and click detection.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode:
+        input: true
+        pullup: true
+      inverted: true    # active-low button
+    name: "Boot Button"
+    device_class: ""
+    filters:
+      - delayed_on: 25ms
+      - delayed_off: 25ms
+    on_press:
+      then:
+        - logger.log: "Button pressed"
+    on_click:
+      then:
+        - light.toggle: status_led
+```
+
+  </Tab>
+  <Tab title="Door / Reed Switch">
+
+A magnetic reed switch reporting door open/close state.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Front Door"
+    device_class: door
+    filters:
+      - delayed_on_off: 50ms    # debounce both edges
+    on_state:
+      then:
+        - logger.log:
+            format: "Door is now %s"
+            args: ['x ? "open" : "closed"']
+```
+
+  </Tab>
+  <Tab title="Template Sensor">
+
+A virtual binary sensor computed from another sensor's value.
+
+```yaml
+binary_sensor:
+  - platform: template
+    name: "High Temperature Alert"
+    device_class: heat
+    lambda: |-
+      return id(room_temp).state > 35.0;
+    on_press:
+      then:
+        - switch.turn_on: cooling_fan
+    on_release:
+      then:
+        - switch.turn_off: cooling_fan
+```
+
+  </Tab>
+  <Tab title="ESP32 Touch">
+
+Capacitive touch button using the ESP32's built-in touch controller.
+
+```yaml
+binary_sensor:
+  - platform: esp32_touch
+    name: "Touch Button"
+    pin: GPIO4
+    threshold: 1000
+    filters:
+      - delayed_on: 20ms
+    on_press:
+      then:
+        - light.toggle: rgb_light
+```
+
+  </Tab>
+  <Tab title="Status Sensor">
+
+Reports whether the device is connected to the API or MQTT broker.
+
+```yaml
+binary_sensor:
+  - platform: status
+    name: "Device Status"
+    device_class: connectivity
+    entity_category: diagnostic
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## Conditions
+
+Two conditions are available for use inside automation `condition:` blocks.
+
+```yaml
+condition:
+  - binary_sensor.is_on:
+      id: front_door
+  - binary_sensor.is_off:
+      id: front_door
+```
+
+## Actions
+
+Use `binary_sensor.invalidate_state` to clear the current state of a binary sensor (e.g. to reset a template sensor).
+
+```yaml
+action:
+  - binary_sensor.invalidate_state: my_binary_sensor
+```

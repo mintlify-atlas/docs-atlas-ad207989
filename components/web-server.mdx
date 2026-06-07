@@ -1,0 +1,256 @@
+---
+title: "Built-in Web Server Component for ESPHome"
+sidebarTitle: "Web Server"
+description: "Serve a local web dashboard, REST API, and Server-Sent Events stream directly from your ESPHome device over Wi-Fi on port 80."
+---
+
+The ESPHome `web_server` component starts a lightweight HTTP server on your device that exposes a browser-accessible dashboard, a REST API for controlling entities, and a Server-Sent Events (SSE) stream for live state updates. This page covers configuration options, the REST endpoints, authentication, UI versions, local asset serving, entity sorting, and memory considerations.
+
+<Warning>
+The web server occupies significant RAM — expect to use 10–30 KB of heap depending on the number of entities and the UI version. On low-memory targets such as ESP8266, monitor heap usage carefully and consider disabling features you do not need.
+</Warning>
+
+## Basic Configuration
+
+```yaml
+web_server:
+  port: 80
+```
+
+No `auth:` means the interface is open to anyone on the same network. This is fine for a trusted local network, but add credentials for any publicly accessible device.
+
+## Configuration Variables
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `port` | integer | `80` | TCP port the HTTP server listens on. |
+| `version` | integer | `2` | UI version to serve. One of `1`, `2`, or `3`. |
+| `auth` | map | — | Enable HTTP Basic Authentication. Requires `username` and `password`. |
+| `include_internal` | boolean | `false` | Expose entities marked `internal: true` via the REST API. |
+| `local` | boolean | — | Serve UI assets from flash instead of the CDN. Not supported with `version: 1`. |
+| `compression` | string | `gzip` | Compression format for local assets. One of `gzip` or `br`. |
+| `log` | boolean | `true` | Stream log messages to the web UI via the SSE `/events` endpoint. |
+| `enable_private_network_access` | boolean | `true` | Send the `Access-Control-Allow-Private-Network` CORS header. |
+| `css_url` | string | *version-dependent* | URL of a custom CSS stylesheet loaded by the web UI. |
+| `js_url` | string | *version-dependent* | URL of a custom JavaScript bundle loaded by the web UI. |
+| `css_include` | file path | — | Local CSS file to embed in flash and serve at `/0.css`. |
+| `js_include` | file path | — | Local JS file to embed in flash and serve at `/0.js`. |
+| `sorting_groups` | list | — | Named display groups for entities. **Version 3 only.** |
+
+### `auth:` sub-keys
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `username` | string | **Required.** Basic auth username (minimum 1 character). |
+| `password` | string | **Required.** Basic auth password (minimum 1 character). |
+
+```yaml
+web_server:
+  port: 80
+  auth:
+    username: admin
+    password: !secret web_server_password
+```
+
+## UI Versions
+
+ESPHome ships three generations of the built-in web UI:
+
+| Version | JS bundle source | Notes |
+|---------|-----------------|-------|
+| `1` | `https://oi.esphome.io/v1/…` | Legacy. No `local:` support. |
+| `2` | `https://oi.esphome.io/v2/www.js` | Default. Supports `local: true`. |
+| `3` | `https://oi.esphome.io/v3/www.js` | Latest. Adds `sorting_groups` support. |
+
+```yaml
+web_server:
+  version: 3
+```
+
+<Note>
+Versions 2 and 3 embed the generated index HTML directly in the firmware's PROGMEM, keeping RAM usage lower than version 1 which builds the HTML dynamically.
+</Note>
+
+## Local Asset Serving
+
+By default the web UI loads its JavaScript from the ESPHome CDN. Enabling `local: true` embeds the assets in the device's flash so the dashboard works without internet access:
+
+```yaml
+web_server:
+  version: 2
+  local: true
+```
+
+<Warning>
+`local: true` requires `version: 2` or `version: 3`. Setting `local: true` with `version: 1` will cause a validation error.
+</Warning>
+
+Flash usage increases substantially when local assets are enabled. Use `compression: br` (Brotli) instead of the default `gzip` to reduce the embedded asset size if flash space is tight.
+
+## REST API Reference
+
+All endpoints use the entity's `id` field as defined in your YAML configuration.
+
+### Web Interface
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Returns the HTML web dashboard. |
+
+### Sensor Entities
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/sensor/<id>` | Returns current sensor state as JSON. |
+
+### Switch Entities
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/switch/<id>` | Returns current switch state as JSON. |
+| `POST` | `/switch/<id>/turn_on` | Turns the switch on. |
+| `POST` | `/switch/<id>/turn_off` | Turns the switch off. |
+| `POST` | `/switch/<id>/toggle` | Toggles the switch state. |
+
+### Light Entities
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/light/<id>` | Returns current light state as JSON. |
+| `POST` | `/light/<id>/turn_on` | Turns the light on (accepts JSON body with brightness, color, etc.). |
+| `POST` | `/light/<id>/turn_off` | Turns the light off. |
+| `POST` | `/light/<id>/toggle` | Toggles the light. |
+
+### Text Sensor Entities
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/text_sensor/<id>` | Returns the current text sensor value as JSON. |
+
+### Server-Sent Events Stream
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/events` | Opens a persistent SSE connection. The server pushes state change events for all entities and (if `log: true`) log messages in real time. |
+
+<Tip>
+The web UI uses the `/events` SSE stream to keep its displayed values current without polling. You can also consume this stream from a browser, Home Assistant, or any HTTP client that supports `text/event-stream`.
+</Tip>
+
+The web server reserves **5 concurrent client connections** for browser tabs, the SSE stream, and concurrent POST requests.
+
+## Entity Sorting (Version 3 Only)
+
+Version 3 introduces `sorting_groups` on the `web_server:` block and `web_server.sorting_weight` / `web_server.sorting_group_id` per-entity configuration for controlling display order and grouping in the UI.
+
+### Defining Groups
+
+```yaml
+web_server:
+  version: 3
+  sorting_groups:
+    - id: group_climate
+      name: "Climate"
+      sorting_weight: 10
+    - id: group_lights
+      name: "Lights"
+      sorting_weight: 20
+```
+
+`sorting_weight` on the group controls the group's position relative to other groups. A lower number appears first (default `50`).
+
+### Assigning Entities to Groups
+
+```yaml
+sensor:
+  - platform: dht
+    id: temperature
+    name: "Temperature"
+    web_server:
+      sorting_group_id: group_climate
+      sorting_weight: 1   # position within the group
+
+  - platform: dht
+    id: humidity
+    name: "Humidity"
+    web_server:
+      sorting_group_id: group_climate
+      sorting_weight: 2
+```
+
+<Warning>
+`sorting_groups`, `sorting_weight`, and `sorting_group_id` are **only valid with `version: 3`**. Using them with version 1 or 2 will cause a validation error.
+</Warning>
+
+## OTA via Web Server
+
+Web server OTA (uploading firmware through the browser) is handled by the `ota` platform component, not by `web_server` itself. The `ota:` option inside `web_server:` only accepts `false` to explicitly disable web-based OTA for that interface:
+
+```yaml
+web_server:
+  port: 80
+  ota: false   # disable OTA uploads through this web server
+```
+
+To enable web server OTA uploads, configure the OTA platform separately:
+
+```yaml
+ota:
+  - platform: web_server
+```
+
+## Memory Considerations
+
+The web server auto-loads `json` and `web_server_base` components. Combined with the SSE event loop and entity state serialisation, memory use can be substantial:
+
+- Reserve space for 5 concurrent HTTP client connections.
+- `local: true` embeds additional asset bytes in flash (not RAM).
+- `log: true` allocates one log listener slot in the logger.
+- Version 2+ embeds the index HTML in PROGMEM rather than building it dynamically, which saves RAM at the cost of a small flash increase.
+
+<Tip>
+On ESP8266 targets, start with `version: 2`, disable `log: false` if you do not need the log stream, and set `include_internal: false`. Check free heap in the startup logs; aim to keep at least 10 KB free at all times.
+</Tip>
+
+## Supported Platforms
+
+`web_server` is available on: **ESP32**, **ESP8266**, **BK72xx**, **LN882x**, **RTL87xx**, **RP2040**.
+
+It is not available on the `host` platform.
+
+## Full Example
+
+```yaml
+web_server:
+  port: 80
+  version: 3
+  local: true
+  auth:
+    username: admin
+    password: !secret web_password
+  log: true
+  include_internal: false
+  enable_private_network_access: true
+  sorting_groups:
+    - id: grp_sensors
+      name: "Sensors"
+      sorting_weight: 10
+    - id: grp_controls
+      name: "Controls"
+      sorting_weight: 20
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    web_server:
+      sorting_group_id: grp_sensors
+      sorting_weight: 1
+
+switch:
+  - platform: gpio
+    pin: GPIO2
+    name: "Relay"
+    web_server:
+      sorting_group_id: grp_controls
+      sorting_weight: 1
+```

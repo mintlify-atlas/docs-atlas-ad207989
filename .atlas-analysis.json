@@ -1,0 +1,123 @@
+{
+  "projectType": "framework",
+  "projectName": "ESPHome",
+  "projectDescription": "ESPHome is a firmware framework for ESP32, ESP8266, BK72xx, and RP2040 microcontrollers that lets you configure devices using simple YAML files and integrate them with home automation systems like Home Assistant.",
+  "theme": "palm",
+  "primaryColor": "#14bbf3",
+  "lightColor": "#63cce9",
+  "darkColor": "#f4f4fc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "getting-started/installation",
+              "getting-started/first-device",
+              "getting-started/yaml-configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "guides/esphome-core",
+              "guides/automations",
+              "guides/substitutions-packages",
+              "guides/secrets"
+            ]
+          },
+          {
+            "group": "Connectivity",
+            "pages": [
+              "components/wifi",
+              "components/mqtt",
+              "components/api",
+              "components/bluetooth"
+            ]
+          },
+          {
+            "group": "Entity Components",
+            "pages": [
+              "components/sensor",
+              "components/binary-sensor",
+              "components/switch",
+              "components/light",
+              "components/climate",
+              "components/display"
+            ]
+          },
+          {
+            "group": "Device Management",
+            "pages": [
+              "components/ota",
+              "components/logger",
+              "components/web-server",
+              "components/safe-mode"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI & Dashboard",
+        "groups": [
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/commands",
+              "cli/dashboard"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/custom-components",
+              "advanced/hardware-platforms",
+              "advanced/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "YAML-based device configuration — no coding required for most use cases",
+    "Support for ESP32, ESP8266, BK72xx (LibreTiny), RP2040, and Zephyr platforms",
+    "700+ built-in component integrations (sensors, lights, switches, climate, displays, and more)",
+    "Native Home Assistant integration via encrypted API protocol",
+    "MQTT support with auto-discovery for any home automation hub",
+    "Over-the-Air (OTA) firmware updates",
+    "Automation engine with triggers, conditions, and actions",
+    "Substitutions and packages for reusable, modular configuration",
+    "Web dashboard for managing multiple devices",
+    "Bluetooth proxy and BLE tracker support",
+    "External components for third-party extensions",
+    "Voice assistant integration for local speech processing"
+  ],
+  "publicApiSurface": [
+    "esphome config <file.yaml> — validate configuration",
+    "esphome compile <file.yaml> — compile firmware",
+    "esphome upload <file.yaml> — flash firmware to device",
+    "esphome run <file.yaml> — compile, upload, and show logs",
+    "esphome logs <file.yaml> — stream serial logs",
+    "esphome dashboard — launch web dashboard",
+    "esphome wizard <file.yaml> — interactive configuration generator",
+    "esphome clean <file.yaml> — remove build files",
+    "esphome version — print version",
+    "esphome update-all — OTA update all devices",
+    "esphome rename <file.yaml> <new-name> — rename device",
+    "esphome idedata <file.yaml> — print IDE build data",
+    "esphome analyze-memory <file.yaml> — analyze firmware memory usage",
+    "esphome bundle <file.yaml> — bundle firmware files",
+    "esphome.codegen — Python API for custom component code generation",
+    "esphome.config_validation (cv) — schema validators for component configuration",
+    "esphome.automation — trigger/condition/action registration API",
+    "esphome.core.CORE — global build state object",
+    "IS_PLATFORM_COMPONENT, CODEOWNERS, AUTO_LOAD, DEPENDENCIES — component metadata",
+    "register_action() / register_condition() / register_trigger() — automation registry",
+    "Component YAML keys: esphome, wifi, mqtt, api, ota, logger, sensor, binary_sensor, switch, light, climate, cover, fan, button, number, select, text_sensor, display, uart, i2c, spi, script, substitutions, packages, external_components, web_server, bluetooth_proxy, voice_assistant"
+  ]
+}

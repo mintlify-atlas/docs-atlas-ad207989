@@ -1,0 +1,211 @@
+---
+title: "Your First ESPHome Device: From YAML to Flashed Firmware"
+sidebarTitle: "First Device"
+description: "Build, validate, compile, and flash your first ESPHome device end-to-end. Covers USB flashing, OTA updates, secrets management, and viewing live logs."
+---
+
+ESPHome turns a YAML configuration file into compiled C++ firmware that runs on your microcontroller. This guide walks through the entire workflow for a brand-new ESP32 board: writing a minimal configuration, validating it, compiling the firmware, flashing over USB, and then viewing live logs — all from the command line.
+
+## Prerequisites
+
+- ESPHome installed (see [Installation](/getting-started/installation))
+- An ESP32 development board connected via USB
+- A working Wi-Fi network
+
+## Step 1 — Write the Configuration
+
+Create a file called `my-device.yaml` in your working directory. The configuration below includes the four components you'll want in almost every device: `wifi`, `api`, `ota`, and `logger`.
+
+```yaml my-device.yaml
+esphome:
+  name: my-device
+  friendly_name: My Device
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+```
+
+Each top-level key maps to an ESPHome component:
+
+| Key | Purpose |
+|---|---|
+| `esphome` | Device identity — `name` (used as the mDNS hostname) and `friendly_name` (shown in Home Assistant) |
+| `esp32` | Target platform and board definition |
+| `wifi` | Wi-Fi credentials — values pulled from `secrets.yaml` via the `!secret` tag |
+| `api` | Native API for Home Assistant integration, with encrypted transport |
+| `ota` | Over-the-air update support using the `esphome` platform |
+| `logger` | Serial logging at the default baud rate |
+
+<Note>
+  The `!secret` tag tells ESPHome to look up the value from a separate `secrets.yaml` file rather than embedding it in the config. This prevents credentials from being accidentally committed to version control.
+</Note>
+
+## Step 2 — Create secrets.yaml
+
+Alongside `my-device.yaml`, create a `secrets.yaml` file with the actual credential values. ESPHome searches for `secrets.yaml` (or `secrets.yml`) in the same directory as your config file.
+
+```yaml secrets.yaml
+wifi_ssid: "MyNetwork"
+wifi_password: "MyP@ssword123"
+api_key: "YOUR_32_BYTE_BASE64_ENCODED_KEY_HERE"
+ota_password: "my-ota-password"
+```
+
+<Warning>
+  Never commit `secrets.yaml` to a public repository. Add it to your `.gitignore` file. ESPHome itself does not write a `.gitignore` unless you opt in via the `ENV_NOGITIGNORE` environment variable, so managing this yourself is important.
+</Warning>
+
+<Tip>
+  Generate a valid 32-byte base64 API encryption key with: `python3 -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"`.
+</Tip>
+
+## Step 3 — Validate the Configuration
+
+Before compiling, ask ESPHome to parse and validate the configuration without building anything:
+
+```bash
+esphome config my-device.yaml
+```
+
+A valid configuration prints the fully-resolved YAML (with schema defaults applied) and ends with:
+
+```
+INFO Configuration is valid!
+```
+
+If there are errors, the output shows the exact key path and file location of the problem, making it easy to fix before spending time on a compile.
+
+## Step 4 — Compile the Firmware
+
+Generate the C++ source and build the binary with:
+
+```bash
+esphome compile my-device.yaml
+```
+
+ESPHome generates C++ source code from your YAML, then invokes the appropriate toolchain (PlatformIO for Arduino/ESP-IDF projects, or the ESP-IDF toolchain directly when `framework.type: esp-idf` is used). On first run this downloads the platform packages from the internet, which can take several minutes. Subsequent compiles reuse the cached packages and are much faster.
+
+A successful compile ends with:
+
+```
+INFO Successfully compiled program.
+```
+
+## Step 5 — Flash Over USB
+
+For the very first flash, the device needs to be connected via USB and put into a mode where it accepts new firmware. On most ESP32 dev boards you do not need to press any buttons — ESPHome uses `esptool` to reset the chip into the bootloader automatically.
+
+```bash
+esphome run my-device.yaml
+```
+
+`esphome run` is equivalent to `compile` + `upload` + `logs` in a single command. If you have multiple serial ports, ESPHome displays an interactive prompt:
+
+```
+Found multiple options for uploading, please choose one:
+  [1] /dev/ttyUSB0 (CP2102 USB to UART Bridge Controller)
+  [2] /dev/ttyUSB1 (CH340 serial converter)
+(number):
+```
+
+Select the correct port. ESPHome calls `esptool` to write the firmware and then automatically opens the serial log stream.
+
+<Note>
+  On Linux, your user may need to be a member of the `dialout` group to access serial ports: `sudo usermod -a -G dialout $USER`. Log out and back in for the change to take effect.
+</Note>
+
+<Warning>
+  Use a **data-capable** USB cable. Many USB cables are power-only and will not expose a serial port. If no serial port appears, try a different cable.
+</Warning>
+
+You can also separate the upload step from the log step:
+
+```bash
+# Upload only (no logs)
+esphome upload my-device.yaml
+
+# Then view logs separately
+esphome logs my-device.yaml
+```
+
+## Step 6 — View Live Logs
+
+Once the device is running and connected to Wi-Fi, you can stream logs over the network using the native API (no USB required):
+
+```bash
+esphome logs my-device.yaml
+```
+
+ESPHome looks for the device via mDNS using the `name` you set (`my-device.local` in this example) and streams logs directly from the running firmware. If the device is not yet on the network, pass `--device SERIAL` to force the serial path:
+
+```bash
+esphome logs my-device.yaml --device SERIAL
+```
+
+## Step 7 — Subsequent OTA Updates
+
+After the first USB flash, you never need to connect a cable again. Any subsequent config change can be deployed wirelessly:
+
+```bash
+esphome run my-device.yaml
+```
+
+ESPHome detects that the device is already on the network, compiles the updated firmware, and pushes it over-the-air using the `esphome` OTA platform. The OTA transport uses challenge-response authentication (the password is never sent in cleartext over the wire).
+
+<Tip>
+  You can also split the workflow: `esphome compile my-device.yaml` to build, then `esphome upload my-device.yaml` to push the binary over OTA. This is useful in CI pipelines where the build host and the device are on different networks.
+</Tip>
+
+## Full Workflow Summary
+
+<Steps>
+  <Step title="Write my-device.yaml and secrets.yaml">
+    Define the device name, platform, Wi-Fi credentials, API, OTA, and logger.
+  </Step>
+  <Step title="Validate">
+    ```bash
+    esphome config my-device.yaml
+    ```
+  </Step>
+  <Step title="Compile">
+    ```bash
+    esphome compile my-device.yaml
+    ```
+  </Step>
+  <Step title="Flash (first time, USB)">
+    ```bash
+    esphome run my-device.yaml
+    ```
+  </Step>
+  <Step title="Update (subsequent, OTA)">
+    ```bash
+    esphome run my-device.yaml
+    ```
+    ESPHome automatically chooses OTA when the device is reachable on the network.
+  </Step>
+</Steps>
+
+<CardGroup cols={2}>
+  <Card title="YAML Configuration" icon="code" href="/getting-started/yaml-configuration">
+    Deep dive into YAML structure, special tags like !secret and !include, and platform options.
+  </Card>
+  <Card title="Installation" icon="wrench" href="/getting-started/installation">
+    Install ESPHome via pip, Docker, or the Home Assistant add-on.
+  </Card>
+</CardGroup>

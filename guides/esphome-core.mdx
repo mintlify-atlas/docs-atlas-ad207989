@@ -1,0 +1,250 @@
+---
+title: "ESPHome Core Configuration: The esphome: Block"
+sidebarTitle: "Core Config"
+description: "Learn how to configure the top-level esphome: block, including device name, build settings, automations, and the YAML-to-binary build pipeline."
+---
+
+The `esphome:` block is the required top-level section of every ESPHome configuration file. It controls the device's identity (hostname, friendly name, project metadata), compilation settings (build path, PlatformIO options), and lifecycle automations (`on_boot`, `on_shutdown`, `on_loop`). This page covers every key in that block and explains how ESPHome transforms your YAML into a flashable binary.
+
+## Minimal configuration
+
+Every valid ESPHome config file must include at least a `name` under `esphome:` and a target platform block (e.g. `esp32:` or `esp8266:`).
+
+```yaml
+esphome:
+  name: my-device
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+```
+
+---
+
+## Identity keys
+
+### `name`
+
+The device's network hostname. ESPHome validates this with `cv.valid_name`, which accepts lowercase letters, digits, and hyphens only. The maximum length is 31 characters (24 if `name_add_mac_suffix` is enabled, to leave room for the `-AABBCC` suffix).
+
+```yaml
+esphome:
+  name: living-room-sensor
+```
+
+<Warning>
+Underscores in the hostname are discouraged. Some DHCP servers and mDNS/DNS-SD implementations reject or mangle names containing underscores, which can prevent the device from being discoverable on your local network.
+</Warning>
+
+### `friendly_name`
+
+A human-readable label for the device that is sent to Home Assistant and shown in the ESPHome dashboard. It may contain spaces, mixed case, and most Unicode characters. The maximum byte length is 120.
+
+```yaml
+esphome:
+  name: living-room-sensor
+  friendly_name: Living Room Sensor
+```
+
+### `name_add_mac_suffix`
+
+When set to `true`, ESPHome appends the last three bytes of the device's MAC address to the hostname (separated by `-`) and to the friendly name (separated by a space). This is useful when flashing many identical devices from one YAML file.
+
+```yaml
+esphome:
+  name: shelly-plug
+  friendly_name: Shelly Plug
+  name_add_mac_suffix: true
+  # Results in e.g. "shelly-plug-a1b2c3" / "Shelly Plug A1B2C3"
+```
+
+<Note>
+When `name_add_mac_suffix` is `true`, the `name` field may be at most 24 characters so the final hostname stays within the 31-character DNS limit.
+</Note>
+
+### `comment`
+
+A short description stored in the device info and visible in the ESPHome dashboard. Maximum 255 bytes.
+
+```yaml
+esphome:
+  name: garage-door
+  comment: Controls the garage door relay and reads the reed switch.
+```
+
+---
+
+## Project metadata
+
+The optional `project:` sub-block marks a configuration as a branded/distributable project. Both `name` and `version` are required when the block is present.
+
+| Key | Description | Constraint |
+|-----|-------------|-----------|
+| `name` | Namespace-qualified project name (`vendor.product`) | Must contain exactly one `.`; max 127 bytes |
+| `version` | Semantic version string | Max 127 bytes |
+
+```yaml
+esphome:
+  name: shelly-plus-1pm
+  project:
+    name: shelly.plus-1pm
+    version: "2.1.0"
+```
+
+ESPHome compiles the name and version as `ESPHOME_PROJECT_NAME` and `ESPHOME_PROJECT_VERSION` preprocessor defines, making them available in C++ code and exposing them over the native API.
+
+The project block also supports an `on_update` trigger that fires when the device receives a firmware update carrying a new project version string:
+
+```yaml
+esphome:
+  project:
+    name: acme.widget
+    version: "1.0.0"
+    on_update:
+      - logger.log:
+          format: "Firmware updated to %s"
+          args: [version.c_str()]
+```
+
+---
+
+## Build configuration
+
+### `build_path`
+
+The directory where compiled output is written, relative to ESPHome's data directory. If omitted, it defaults to `build/<name>`. You can also set the `ESPHOME_BUILD_PATH` environment variable as a global default.
+
+```yaml
+esphome:
+  name: my-device
+  build_path: custom_builds/my-device
+```
+
+### `platformio_options`
+
+A freeform mapping of PlatformIO `platformio.ini` keys and values that is merged into the generated build environment. Values can be strings or lists of strings.
+
+```yaml
+esphome:
+  name: my-device
+  platformio_options:
+    upload_speed: 115200
+    board_build.flash_mode: dio
+    build_flags:
+      - "-DCONFIG_HEAP_TRACING"
+```
+
+<Tip>
+Use `platformio_options` to override the upload speed, set custom flash parameters, or pass extra compiler flags that ESPHome does not expose natively.
+</Tip>
+
+---
+
+## Lifecycle automations
+
+The `esphome:` block supports three built-in automation triggers that fire at key points in the device lifecycle. All three accept the standard ESPHome action list syntax.
+
+### `on_boot`
+
+Fires once after all components have been initialised. The optional `priority` key (default `600.0`) controls the order relative to other boot tasks — higher values run first.
+
+```yaml
+esphome:
+  name: my-device
+  on_boot:
+    priority: 600
+    then:
+      - logger.log: "Device is booting up"
+      - output.turn_on: status_led
+```
+
+### `on_shutdown`
+
+Fires when the device is about to shut down or restart (e.g. triggered by an OTA update or a software restart). The `priority` key works the same way as for `on_boot`.
+
+```yaml
+esphome:
+  name: my-device
+  on_shutdown:
+    then:
+      - logger.log: "Shutting down — saving state"
+```
+
+### `on_loop`
+
+Fires on every main loop iteration, after all component `loop()` calls. There is no `priority` parameter.
+
+```yaml
+esphome:
+  name: my-device
+  on_loop:
+    then:
+      - lambda: |-
+          static uint32_t last_ms = 0;
+          if (millis() - last_ms > 5000) {
+            last_ms = millis();
+            ESP_LOGI("loop", "still alive");
+          }
+```
+
+<Warning>
+Keep `on_loop` actions short and non-blocking. Long-running work here will starve all other components since ESPHome is single-threaded on most platforms.
+</Warning>
+
+---
+
+## Build pipeline
+
+Understanding the build pipeline helps with debugging and with knowing when to invalidate the build cache.
+
+<Steps>
+  <Step title="YAML parsing">
+    ESPHome's custom YAML loader reads your `.yaml` file and resolves special tags (`!secret`, `!include`, `!lambda`, etc.). The result is a Python dict tree with source-location metadata attached to every node.
+  </Step>
+  <Step title="Substitutions and packages pass">
+    All `substitutions:` variables are expanded (including Jinja2 expressions), and all `packages:` entries are loaded and merged into the config dict.
+  </Step>
+  <Step title="Schema validation and code generation">
+    Each top-level domain (e.g. `sensor:`, `wifi:`) is validated against its Voluptuous schema. The async code-generation coroutines then emit C++ statements, global declarations, and build flags into an in-memory representation.
+  </Step>
+  <Step title="C++ output">
+    ESPHome writes the generated `main.cpp` (and any copied include files) into `<build_path>/src/`. At this point the code is fully deterministic — re-running with an unchanged config produces identical output.
+  </Step>
+  <Step title="PlatformIO or ESP-IDF compilation">
+    The writer generates a `platformio.ini` (Arduino / generic) or `CMakeLists.txt` (ESP-IDF), then shells out to PlatformIO or IDF to compile the C++ sources into a `.bin` firmware image.
+  </Step>
+  <Step title="Upload">
+    ESPHome uploads the binary to the device over serial (initial flash) or OTA (subsequent updates), then optionally opens a log stream.
+  </Step>
+</Steps>
+
+---
+
+## Complete example
+
+```yaml
+esphome:
+  name: workshop-plug
+  friendly_name: Workshop Plug
+  name_add_mac_suffix: false
+  comment: "Smart plug for the workshop bench, monitors power and temperature."
+  project:
+    name: acme.workshop-plug
+    version: "1.2.3"
+  build_path: build/workshop-plug
+  platformio_options:
+    upload_speed: 460800
+  on_boot:
+    priority: 600
+    then:
+      - logger.log: "Workshop Plug starting up"
+  on_shutdown:
+    then:
+      - logger.log: "Workshop Plug shutting down"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+```

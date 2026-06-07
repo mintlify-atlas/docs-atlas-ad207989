@@ -1,0 +1,104 @@
+---
+title: "ESPHome: YAML-Driven Firmware for ESP Microcontrollers"
+sidebarTitle: "Introduction"
+description: "ESPHome turns ESP32, ESP8266, BK72xx, and RP2040 boards into smart devices with a simple YAML config — no C++ required."
+---
+
+ESPHome is an open-source firmware framework that lets you configure microcontrollers using straightforward YAML files. Write a configuration, run one command, and your ESP32 or ESP8266 device is flashed, connected to your network, and reporting sensor data — all without writing a single line of C++.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Install ESPHome via pip or Docker and set up your environment in minutes.
+  </Card>
+  <Card title="First Device" icon="microchip" href="/getting-started/first-device">
+    Flash your first device and connect it to your network with a guided walkthrough.
+  </Card>
+  <Card title="YAML Configuration" icon="file-code" href="/getting-started/yaml-configuration">
+    Learn the full YAML configuration schema used to define every aspect of a device.
+  </Card>
+  <Card title="Automations" icon="bolt" href="/guides/automations">
+    React to sensor events, schedule actions, and build complex device logic without code.
+  </Card>
+</CardGroup>
+
+## Why ESPHome?
+
+ESPHome sits between raw Arduino/IDF development and cloud-dependent smart home products. You own the firmware, the configuration, and the data.
+
+<CardGroup cols={3}>
+  <Card title="700+ Components" icon="puzzle-piece">
+    Built-in support for hundreds of sensors, displays, lights, climate controllers, and communication modules.
+  </Card>
+  <Card title="Home Assistant Native" icon="house">
+    Devices appear automatically in Home Assistant via an encrypted, local API — no MQTT broker required.
+  </Card>
+  <Card title="OTA Updates" icon="arrows-rotate">
+    Push firmware updates over Wi-Fi to every device in your network without touching a USB cable.
+  </Card>
+</CardGroup>
+
+## Core Architecture
+
+An ESPHome device is defined entirely by its YAML configuration file. The `esphome` CLI reads that file, generates C++ source code, compiles it with PlatformIO or ESP-IDF, and uploads the resulting binary to the device.
+
+```yaml esphome-device.yaml
+esphome:
+  name: my-sensor
+  friendly_name: "Living Room Sensor"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+
+sensor:
+  - platform: dht
+    pin: GPIO4
+    model: DHT22
+    temperature:
+      name: "Living Room Temperature"
+    humidity:
+      name: "Living Room Humidity"
+    update_interval: 60s
+```
+
+## Explore the Documentation
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/guides/esphome-core">
+    Understand the esphome: block, board definitions, and how the build pipeline works.
+  </Card>
+  <Card title="Connectivity" icon="wifi" href="/components/wifi">
+    Configure Wi-Fi, MQTT, the Home Assistant API, and Bluetooth.
+  </Card>
+  <Card title="Entity Components" icon="list" href="/components/sensor">
+    Document sensors, binary sensors, switches, lights, climate, and display components.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Full reference for every ESPHome CLI command and flag.
+  </Card>
+  <Card title="Substitutions & Packages" icon="layer-group" href="/guides/substitutions-packages">
+    Build reusable, modular configurations with substitutions and package includes.
+  </Card>
+  <Card title="Custom Components" icon="code" href="/advanced/custom-components">
+    Extend ESPHome with your own C++ components and Python schema validators.
+  </Card>
+</CardGroup>
+
+<Note>
+  ESPHome is part of the [Open Home Foundation](https://www.openhomefoundation.org/). The project is open source under the MIT license and actively maintained by a large community.
+</Note>

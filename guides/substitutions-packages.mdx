@@ -1,0 +1,311 @@
+---
+title: "Substitutions and Packages: Reusable ESPHome Config"
+sidebarTitle: "Substitutions & Packages"
+description: "Use substitutions for parameterised YAML values and packages to share config fragments across multiple ESPHome devices."
+---
+
+Substitutions and packages are ESPHome's two mechanisms for keeping configuration DRY. **Substitutions** let you define named variables at the top of a file (or pass them from the CLI) and reference them anywhere in the YAML with `${variable_name}` syntax. **Packages** let you split configuration into reusable fragments — local files, inline YAML anchors, or remote GitHub repositories — that are merged into the main config before validation. Both features are resolved in a pre-pass before any component schemas are evaluated.
+
+---
+
+## Substitutions
+
+### Defining variables
+
+The `substitutions:` block is a simple key/value map. Keys must consist only of letters (`A–Z`, `a–z`), digits (`0–9`), and underscores (`_`). The first character must not be a digit.
+
+```yaml
+substitutions:
+  device_name: living-room-sensor
+  friendly_name: Living Room Sensor
+  update_interval: 30s
+  log_level: DEBUG
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+logger:
+  level: ${log_level}
+```
+
+### Variable syntax
+
+Two forms are accepted:
+
+- **`$variable_name`** — bare dollar sign followed by the variable name (letters, digits, underscores).
+- **`${variable_name}`** — curly-brace form, required when the variable is not the entire value or is adjacent to other characters.
+
+```yaml
+substitutions:
+  prefix: acme
+  board: esp32dev
+
+esphome:
+  name: ${prefix}-device   # curly braces required here
+  project:
+    name: ${prefix}.widget
+
+esp32:
+  board: $board             # bare form works when it's the whole value
+```
+
+When `${variable_name}` or `$variable_name` spans the **entire** YAML value, ESPHome substitutes the raw Python value — preserving non-string types like integers, floats, and booleans. When it appears inside a longer string, it is stringified and concatenated.
+
+### Jinja2 expressions
+
+ESPHome's substitution engine also supports Jinja2 template expressions. If a value contains a Jinja2 expression after `${}` expansion, it is evaluated using the full substitution context as template variables.
+
+```yaml
+substitutions:
+  base_interval: "30"
+  # Jinja2 arithmetic expression — result is the integer 60
+  double_interval: "${base_interval * 2}"
+
+sensor:
+  - platform: dht
+    update_interval: ${double_interval}s
+```
+
+<Note>
+Jinja2 evaluation runs as a second phase only when the value still contains Jinja syntax after the `$var`/`${var}` pass. Simple `${var}` references are resolved first and do not require Jinja.
+</Note>
+
+### CLI overrides
+
+Any substitution can be overridden from the command line using the `-s` / `--substitution` flag. CLI values take the highest priority and override anything defined in the YAML file or in packages.
+
+```bash
+# Override device_name and log_level from the command line
+esphome -s device_name bedroom-sensor -s log_level WARNING run bedroom.yaml
+```
+
+You can pass multiple `-s` flags. Each flag takes exactly two arguments: the key and the value.
+
+### Substitutions in included filenames
+
+Because substitutions are resolved before `!include` files are loaded, you can use a substitution variable in the filename itself:
+
+```yaml
+substitutions:
+  platform: esp32
+
+packages:
+  - !include hardware/${platform}.yaml
+```
+
+---
+
+## Packages
+
+### Overview
+
+The `packages:` block lets you compose a device's configuration from multiple sources. All packages are loaded and merged into the main config before schema validation, so they behave exactly like inline YAML — there is no runtime concept of a "package".
+
+Packages can be declared as a **named dict** (each package gets a string key) or as an **ordered list** (anonymous packages, processed in order). The list form is preferred for new configs:
+
+```yaml
+packages:
+  - !include common/wifi.yaml
+  - !include common/logger.yaml
+  - !include hardware/esp32-poe.yaml
+```
+
+Named dict form (also valid):
+
+```yaml
+packages:
+  wifi: !include common/wifi.yaml
+  logger: !include common/logger.yaml
+```
+
+### Merging behaviour
+
+Packages are merged into the main config using deep-merge semantics. Later declarations override earlier ones for scalar values. Lists from the same key are concatenated. The main config (the device's own `.yaml` file) has the highest priority and always wins over package values.
+
+### Local file packages
+
+The simplest form is a YAML file on disk referenced with `!include`:
+
+```yaml
+# devices/my-device.yaml
+packages:
+  - !include packages/base.yaml
+  - !include packages/sensors/temperature.yaml
+```
+
+```yaml
+# packages/base.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+### Passing variables to included files
+
+You can pass per-device substitution variables into an included package using the `vars:` key:
+
+```yaml
+packages:
+  - !include
+      file: packages/sensor_node.yaml
+      vars:
+        device_name: bedroom
+        update_interval: 60s
+```
+
+Inside `packages/sensor_node.yaml`, `${device_name}` and `${update_interval}` are in scope as local substitutions.
+
+```yaml
+# packages/sensor_node.yaml
+esphome:
+  name: ${device_name}-node
+
+sensor:
+  - platform: dht
+    pin: GPIO4
+    update_interval: ${update_interval}
+    temperature:
+      name: "${device_name} Temperature"
+    humidity:
+      name: "${device_name} Humidity"
+```
+
+### The `defaults:` key in packages
+
+A package file can declare default substitution values under a `defaults:` key at the top of the file. These act like substitution defaults — they are used only if the calling config does not supply the variable.
+
+```yaml
+# packages/sensor_node.yaml
+defaults:
+  update_interval: 30s
+  log_level: INFO
+
+esphome:
+  name: ${device_name}-node
+```
+
+### Remote packages from GitHub
+
+ESPHome can pull packages directly from a GitHub repository. This is useful for distributing shared configuration without requiring consumers to copy files locally.
+
+**Shorthand form** — `github://owner/repo/path/to/file.yaml@ref`:
+
+```yaml
+packages:
+  - github://esphome/firmware/common/base.yaml@main
+```
+
+**Long form** with explicit fields:
+
+```yaml
+packages:
+  - url: https://github.com/example/esphome-configs
+    ref: v2.1.0
+    file: common/wifi.yaml
+    refresh: 1d
+```
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `url` | HTTPS URL of the git repository | Required |
+| `file` / `files` | Path(s) inside the repo to load | Required |
+| `ref` | Branch, tag, or commit SHA | Repo default branch |
+| `refresh` | How often to re-fetch | `1d` |
+| `username` / `password` | Credentials for private repos | — |
+
+<Note>
+Remote packages are cloned to a local cache directory. The `refresh` setting controls how often ESPHome checks for updates. Setting `refresh: 0s` forces a re-fetch on every build.
+</Note>
+
+<Warning>
+The `path:` key inside a remote package definition narrows the working directory within the cloned repo; it does not affect `file:` path resolution. All `file:` paths are always relative to the repo root (or the narrowed `path:` sub-directory if set).
+</Warning>
+
+### Nested packages
+
+A package file may itself contain a `packages:` block. ESPHome recursively loads and merges nested packages up to a depth of 20 levels.
+
+---
+
+## A real-world example
+
+This pattern uses a shared base package for network and API config, a hardware-specific package for the board and platform, and device-specific overrides at the top level.
+
+<CodeGroup>
+
+```yaml my-bedroom-sensor.yaml
+substitutions:
+  device_name: bedroom-sensor
+  friendly_name: Bedroom Sensor
+  room: bedroom
+
+packages:
+  - !include packages/base.yaml
+  - !include
+      file: packages/sensor-node.yaml
+      vars:
+        update_interval: 60s
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+```
+
+```yaml packages/base.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${device_name} Fallback"
+    password: !secret fallback_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+  level: INFO
+```
+
+```yaml packages/sensor-node.yaml
+defaults:
+  update_interval: 30s
+
+sensor:
+  - platform: dht
+    pin: GPIO4
+    update_interval: ${update_interval}
+    temperature:
+      name: "${room} Temperature"
+    humidity:
+      name: "${room} Humidity"
+```
+
+</CodeGroup>
+
+To override the update interval from the CLI when running a test build:
+
+```bash
+esphome -s update_interval 5s run my-bedroom-sensor.yaml
+```

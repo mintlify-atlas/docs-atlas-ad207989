@@ -1,0 +1,425 @@
+---
+title: "MQTT Component — Broker Connectivity for ESPHome"
+sidebarTitle: "MQTT"
+description: "Connect ESPHome devices to an MQTT broker. Configure broker, auth, TLS, Home Assistant discovery, LWT, QoS, retain flags, triggers, and publish actions."
+---
+
+The `mqtt:` component connects an ESPHome device to any MQTT broker, enabling sensor state publishing, command subscription, and Home Assistant auto-discovery without the native API. This page documents every configuration key sourced directly from the ESPHome MQTT component — broker connection, authentication, TLS, Last-Will-and-Testament messages, on-message triggers, publish actions, and more.
+
+<Note>
+`mqtt:` and `api:` can coexist in the same configuration. Many users run both: `api:` for low-latency Home Assistant integration and `mqtt:` for interoperability with other platforms.
+</Note>
+
+Supported platforms: **ESP32**, **ESP8266**, **BK72xx**, **RTL87xx**.
+
+---
+
+## Minimal Configuration
+
+```yaml
+mqtt:
+  broker: 192.168.1.10
+```
+
+---
+
+## Complete Annotated Example
+
+```yaml
+mqtt:
+  # ── Broker connection ──────────────────────────────────────────────────────
+  broker: mqtt.example.com
+  port: 1883                    # Default: 1883 (8883 for TLS)
+  username: esphome_user
+  password: !secret mqtt_pass
+  client_id: my_esphome_device  # Default: device name
+
+  # ── Topic namespace ────────────────────────────────────────────────────────
+  topic_prefix: mydevice        # Default: device name (esphome config name)
+
+  # ── Home Assistant discovery ───────────────────────────────────────────────
+  discovery: true               # true | false | CLEAN
+  discovery_prefix: homeassistant
+  discovery_retain: true
+  discovery_unique_id_generator: legacy  # legacy | mac
+  discovery_object_id_generator: none    # none | device_name
+
+  # ── Session settings ───────────────────────────────────────────────────────
+  clean_session: false
+  keepalive: 15s
+  reboot_timeout: 15min
+  use_abbreviations: true
+
+  # ── Lifecycle messages ────────────────────────────────────────────────────
+  birth_message:
+    topic: mydevice/status
+    payload: online
+    qos: 0
+    retain: true
+  will_message:
+    topic: mydevice/status
+    payload: offline
+    qos: 0
+    retain: true
+  shutdown_message:
+    topic: mydevice/status
+    payload: offline
+    qos: 0
+    retain: true
+
+  # ── Log forwarding ─────────────────────────────────────────────────────────
+  log_topic:
+    topic: mydevice/debug
+    level: DEBUG            # Optional log level filter
+
+  # ── TLS (ESP32 only) ──────────────────────────────────────────────────────
+  # certificate_authority: |
+  #   -----BEGIN CERTIFICATE-----
+  #   ...
+  #   -----END CERTIFICATE-----
+  # client_certificate: ...
+  # client_certificate_key: ...
+
+  # ── Triggers ─────────────────────────────────────────────────────────────
+  on_connect:
+    - logger.log: "MQTT connected"
+  on_disconnect:
+    - logger.log: "MQTT disconnected"
+
+  on_message:
+    - topic: mydevice/command
+      qos: 0
+      then:
+        - logger.log:
+            format: "Received: %s"
+            args: [x.c_str()]
+
+  on_json_message:
+    - topic: mydevice/json_command
+      qos: 0
+      then:
+        - logger.log: "Got JSON message"
+```
+
+---
+
+## Configuration Variables
+
+### Broker Connection
+
+<ParamField path="broker" type="string" required>
+  Hostname or IP address of the MQTT broker.
+</ParamField>
+
+<ParamField path="port" type="integer" default="1883">
+  TCP port. Use `8883` when TLS is configured.
+</ParamField>
+
+<ParamField path="username" type="string" default='""'>
+  Broker authentication username. Leave empty for anonymous access.
+</ParamField>
+
+<ParamField path="password" type="string" default='""'>
+  Broker authentication password.
+</ParamField>
+
+<ParamField path="client_id" type="string">
+  MQTT client identifier. Defaults to the ESPHome device name if not set. Must be unique per broker connection.
+</ParamField>
+
+<ParamField path="clean_session" type="boolean" default="false">
+  Start a clean session (discard any persistent subscriptions and queued messages from a previous connection).
+</ParamField>
+
+<ParamField path="keepalive" type="time period" default="15s">
+  MQTT keep-alive interval. The client sends a PINGREQ after this period of inactivity to keep the connection alive.
+</ParamField>
+
+<ParamField path="reboot_timeout" type="time period" default="15min">
+  Reboot the device if it cannot reconnect to the broker within this duration.
+</ParamField>
+
+<ParamField path="enable_on_boot" type="boolean" default="true">
+  Whether the MQTT client starts automatically at boot.
+</ParamField>
+
+---
+
+### Topic Prefix
+
+<ParamField path="topic_prefix" type="string" default="device name">
+  All auto-generated topics are prefixed with this value (e.g., `<prefix>/sensor/temperature/state`). Maximum 64 characters. Set to an empty string to disable prefixed topics.
+</ParamField>
+
+---
+
+### Home Assistant Discovery
+
+ESPHome publishes MQTT discovery payloads compatible with Home Assistant's [MQTT integration](https://www.home-assistant.io/integrations/mqtt/).
+
+<ParamField path="discovery" type="boolean or CLEAN" default="true">
+  Enable (`true`), disable (`false`), or enable with cleanup of stale topics (`CLEAN`) for HA MQTT discovery.
+</ParamField>
+
+<ParamField path="discovery_prefix" type="string" default="homeassistant">
+  Root prefix used for discovery payloads. Must match Home Assistant's `discovery_prefix` setting. Maximum 64 characters.
+</ParamField>
+
+<ParamField path="discovery_retain" type="boolean" default="true">
+  Retain discovery messages on the broker so Home Assistant picks them up after a restart.
+</ParamField>
+
+<ParamField path="discover_ip" type="boolean" default="true">
+  Include the device IP address in the discovery payload.
+</ParamField>
+
+<ParamField path="discovery_unique_id_generator" type="string" default="legacy">
+  Strategy for generating unique entity IDs. `legacy` uses the historical format; `mac` uses the device MAC address.
+</ParamField>
+
+<ParamField path="discovery_object_id_generator" type="string" default="none">
+  Strategy for generating the `object_id` field. `none` omits it; `device_name` prefixes it with the device name.
+</ParamField>
+
+<ParamField path="use_abbreviations" type="boolean" default="true">
+  Use MQTT discovery payload abbreviations to reduce message size.
+</ParamField>
+
+---
+
+### Lifecycle Messages
+
+Each message accepts `topic` (required), `payload` (required for explicit messages), `qos` (0/1/2, default 0), and `retain` (default `true`).
+
+<ParamField path="birth_message" type="map">
+  Published when the device connects to the broker. Defaults to `<topic_prefix>/status` → `online`.
+</ParamField>
+
+<ParamField path="will_message" type="map">
+  Last-Will-and-Testament — published by the broker if the device disconnects unexpectedly. Defaults to `<topic_prefix>/status` → `offline`.
+</ParamField>
+
+<ParamField path="shutdown_message" type="map">
+  Published when ESPHome performs a clean shutdown. Defaults to `<topic_prefix>/status` → `offline`.
+</ParamField>
+
+<ParamField path="log_topic" type="map">
+  Forwards device log output to a topic. Accepts an optional `level:` key to filter by log level.
+</ParamField>
+
+---
+
+### TLS / SSL (ESP32 only)
+
+<ParamField path="certificate_authority" type="PEM string">
+  PEM-encoded CA certificate to verify the broker's TLS certificate.
+</ParamField>
+
+<ParamField path="client_certificate" type="PEM string">
+  PEM-encoded client certificate for mutual TLS. Must be specified together with `client_certificate_key`.
+</ParamField>
+
+<ParamField path="client_certificate_key" type="PEM string">
+  PEM-encoded private key corresponding to `client_certificate`.
+</ParamField>
+
+<ParamField path="skip_cert_cn_check" type="boolean" default="false">
+  Skip hostname verification against the certificate CN/SAN. Useful for brokers with self-signed certificates.
+</ParamField>
+
+```yaml
+mqtt:
+  broker: secure-broker.example.com
+  port: 8883
+  certificate_authority: |
+    -----BEGIN CERTIFICATE-----
+    MIIDrzCCApeg...
+    -----END CERTIFICATE-----
+  client_certificate: |
+    -----BEGIN CERTIFICATE-----
+    ...
+    -----END CERTIFICATE-----
+  client_certificate_key: |
+    -----BEGIN RSA PRIVATE KEY-----
+    ...
+    -----END RSA PRIVATE KEY-----
+```
+
+---
+
+## Triggers
+
+### on_connect
+
+Fires each time the MQTT client successfully connects to the broker. The trigger passes a `session_present` boolean (`true` if the broker resumed a prior session).
+
+```yaml
+mqtt:
+  on_connect:
+    - logger.log: "Connected to MQTT broker"
+```
+
+### on_disconnect
+
+Fires when the connection is lost. The trigger passes a `reason` value of type `MQTTClientDisconnectReason`.
+
+```yaml
+mqtt:
+  on_disconnect:
+    - logger.log: "MQTT connection lost — will retry"
+```
+
+### on_message
+
+Subscribe to a topic and run actions when a matching message arrives. The `x` variable holds the payload as a `std::string`.
+
+```yaml
+mqtt:
+  on_message:
+    - topic: mydevice/set_brightness
+      qos: 0
+      payload: ""   # Optional: only trigger on this exact payload
+      then:
+        - light.turn_on:
+            id: main_light
+            brightness: !lambda "return atof(x.c_str());"
+```
+
+<ParamField path="on_message.topic" type="string" required>
+  MQTT topic to subscribe to. Supports `+` (single level) and `#` (multi-level) wildcards.
+</ParamField>
+
+<ParamField path="on_message.qos" type="integer" default="0">
+  QoS level for the subscription (0, 1, or 2).
+</ParamField>
+
+<ParamField path="on_message.payload" type="string">
+  Optional payload filter. The trigger only fires when the received payload matches exactly.
+</ParamField>
+
+### on_json_message
+
+Same as `on_message` but the payload is pre-parsed as JSON. The `x` variable is a `JsonObjectConst`.
+
+```yaml
+mqtt:
+  on_json_message:
+    - topic: mydevice/config
+      qos: 0
+      then:
+        - lambda: |-
+            float temp = x["setpoint"];
+            id(target_temp).publish_state(temp);
+```
+
+---
+
+## Actions
+
+### mqtt.publish
+
+Publish a plain-text message from any automation.
+
+```yaml
+on_...:
+  - mqtt.publish:
+      topic: mydevice/alert
+      payload: "Motion detected"
+      qos: 0
+      retain: false
+```
+
+<ParamField path="mqtt.publish.topic" type="string" required>
+  Destination topic. Supports templates.
+</ParamField>
+
+<ParamField path="mqtt.publish.payload" type="string" required>
+  Message body. Supports templates.
+</ParamField>
+
+<ParamField path="mqtt.publish.qos" type="integer" default="0">
+  QoS level (0, 1, or 2). Supports templates.
+</ParamField>
+
+<ParamField path="mqtt.publish.retain" type="boolean" default="false">
+  Retain the message on the broker. Supports templates.
+</ParamField>
+
+### mqtt.publish_json
+
+Publish a JSON-encoded message using a lambda that populates a `JsonObject`.
+
+```yaml
+on_...:
+  - mqtt.publish_json:
+      topic: mydevice/state
+      payload: |-
+        root["temperature"] = id(temp_sensor).state;
+        root["humidity"] = id(hum_sensor).state;
+      qos: 0
+      retain: false
+```
+
+### mqtt.enable / mqtt.disable
+
+Dynamically start or stop the MQTT client from an automation.
+
+```yaml
+on_...:
+  - mqtt.enable:
+# or
+  - mqtt.disable:
+```
+
+---
+
+## Conditions
+
+| Condition | Description |
+|-----------|-------------|
+| `mqtt.connected` | `true` when the client has an active broker connection |
+
+```yaml
+# Only publish when connected
+- if:
+    condition:
+      mqtt.connected:
+    then:
+      - mqtt.publish:
+          topic: mydevice/ping
+          payload: "pong"
+```
+
+---
+
+## Per-Component MQTT Overrides
+
+Every sensor, switch, and other entity that publishes over MQTT accepts additional keys to customise its topics and QoS.
+
+```yaml
+sensor:
+  - platform: dht
+    temperature:
+      name: "Room Temperature"
+      state_topic: custom/room/temperature    # Override state topic
+      qos: 1
+      retain: true
+    humidity:
+      name: "Room Humidity"
+      state_topic: custom/room/humidity
+```
+
+<CardGroup cols={2}>
+  <Card title="state_topic" icon="arrow-up">
+    Override the topic this entity publishes its state to.
+  </Card>
+  <Card title="command_topic" icon="arrow-down">
+    Override the topic this entity listens for commands on.
+  </Card>
+  <Card title="qos" icon="signal">
+    Per-entity QoS level for publish and subscribe.
+  </Card>
+  <Card title="retain" icon="database">
+    Per-entity retain flag for state messages.
+  </Card>
+</CardGroup>

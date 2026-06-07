@@ -1,0 +1,374 @@
+---
+title: "ESPHome YAML Configuration Structure and Special Tags"
+sidebarTitle: "YAML Configuration"
+description: "Understand ESPHome's YAML structure, platform blocks, and special tags — !secret, !include, !lambda, and !env_var — with real configuration examples."
+---
+
+Every ESPHome firmware image starts with a YAML configuration file. The file describes the device identity, target hardware platform, and every component that should be compiled in. ESPHome's custom YAML loader (built on top of PyYAML) extends standard YAML with several special tags that handle secrets, file inclusion, C++ expressions, and more. This page explains the full configuration structure and every tag the loader supports.
+
+## How ESPHome Parses YAML
+
+ESPHome uses a custom `ESPHomeLoader` class (defined in `esphome/yaml_util.py`) that extends PyYAML's safe loader. It adds support for custom tags, tracks source locations for error messages, and provides a multi-document format where an optional frontmatter document can precede the main config.
+
+When you run any `esphome` command that accepts a config file, the loader:
+
+1. Reads the YAML file from disk.
+2. Resolves `!include` tags into deferred `IncludeFile` objects.
+3. Resolves `!secret` tags by reading `secrets.yaml`.
+4. Resolves `!env_var` tags from environment variables.
+5. Passes the resulting data structure through schema validation.
+6. Generates C++ source from the validated config.
+
+## Top-Level Structure
+
+A complete ESPHome configuration is a YAML mapping. Each top-level key corresponds to either a core config block or a component:
+
+```yaml
+esphome:
+  name: my-device
+  friendly_name: My Device
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+```
+
+<Note>
+  ESPHome enforces that `name` contains only the characters defined in `ALLOWED_NAME_CHARS` — lowercase letters `a-z`, digits `0-9`, hyphens `-`, and underscores `_`. Spaces and uppercase letters are not allowed.
+</Note>
+
+## The `esphome:` Block
+
+The `esphome:` block holds the device's identity and build settings. All keys are optional except `name`.
+
+```yaml
+esphome:
+  name: my-sensor             # mDNS hostname; used by OTA and API discovery
+  friendly_name: My Sensor    # human-readable label shown in Home Assistant
+  name_add_mac_suffix: false  # when true, appends last 3 MAC bytes: my-sensor-a1b2c3
+  comment: "Living room CO2 monitor"
+
+  # Override where the PlatformIO build directory is created
+  build_path: .esphome/build/my-sensor
+
+  # Pass extra options directly to platformio.ini
+  platformio_options:
+    upload_speed: 115200
+    board_build.flash_mode: dio
+
+  # Declare this device as part of a named project (shown in the dashboard)
+  project:
+    name: acme.co2-monitor
+    version: "1.0.0"
+```
+
+| Key | Type | Description |
+|---|---|---|
+| `name` | string | mDNS hostname and device identifier. Used as the OTA/API target address (`<name>.local`). |
+| `friendly_name` | string | Human-readable name shown in Home Assistant and the dashboard. |
+| `name_add_mac_suffix` | boolean | When `true`, ESPHome appends the last three bytes of the MAC address to the device name for uniqueness. When enabled, mDNS discovery is used to locate the device for OTA uploads. |
+| `comment` | string | Free-text annotation stored in firmware metadata. |
+| `build_path` | string | Custom path for the generated PlatformIO/ESP-IDF project. |
+| `platformio_options` | mapping | Arbitrary `platformio.ini` options injected into the generated project file. |
+| `project` | mapping | Project metadata (`name` and `version`) visible in the ESPHome dashboard. |
+
+## Platform Blocks
+
+The platform block tells ESPHome which chip to target. Exactly one of the following keys must be present:
+
+<Tabs>
+  <Tab title="esp32:">
+    Targets the ESP32 family. Supports both the Arduino and ESP-IDF frameworks:
+
+    ```yaml
+    esp32:
+      board: esp32dev          # PlatformIO board ID
+      framework:
+        type: arduino          # "arduino" or "esp-idf"
+    ```
+
+    For ESP-IDF with SDK config options:
+
+    ```yaml
+    esp32:
+      board: esp32-s3-devkitc-1
+      framework:
+        type: esp-idf
+        version: recommended
+        sdkconfig_options:
+          CONFIG_XTAL_FREQ_40: "y"
+    ```
+  </Tab>
+
+  <Tab title="esp8266:">
+    Targets the ESP8266 family using the Arduino framework:
+
+    ```yaml
+    esp8266:
+      board: d1_mini
+      restore_from_flash: true   # persist component state across reboots
+    ```
+  </Tab>
+
+  <Tab title="rp2040:">
+    Targets the Raspberry Pi RP2040 (e.g., Pi Pico W):
+
+    ```yaml
+    rp2040:
+      board: rpipicow
+      framework:
+        platform_version: https://github.com/maxgerhardt/platform-raspberrypi.git
+    ```
+
+    <Note>
+      Flashing an RP2040 for the first time requires BOOTSEL mode: unplug the device, hold the BOOTSEL button, plug in USB while holding, then release the button.
+    </Note>
+  </Tab>
+
+  <Tab title="bk72xx:">
+    Targets Beken BK72xx chips (used in many Tuya-based devices) via the LibreTiny platform:
+
+    ```yaml
+    bk72xx:
+      board: cb2s
+      framework:
+        version: latest
+    ```
+  </Tab>
+</Tabs>
+
+## Special YAML Tags
+
+ESPHome's loader registers custom constructors for the following tags. They extend standard YAML without breaking YAML parsers that understand the spec (unrecognised tags simply pass through as strings in most parsers).
+
+### `!secret` — Pull Values from secrets.yaml
+
+<Note>
+  The `!secret` tag is the recommended way to handle any value that should not appear in your config file — Wi-Fi passwords, API keys, OTA passwords, and similar credentials.
+</Note>
+
+When the loader encounters `!secret <key>`, it opens `secrets.yaml` in the same directory as the config file and returns the value for that key. If the key is not found, the loader raises an error with the exact source location.
+
+```yaml secrets.yaml
+wifi_ssid: "HomeNetwork"
+wifi_password: "s3cur3!"
+api_key: "dGhpcyBpcyBhIDMyIGJ5dGUga2V5IQ=="
+ota_password: "ota-secret"
+```
+
+```yaml my-device.yaml
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+```
+
+The loader first looks for `secrets.yaml` next to the current file. If that file includes other files in sub-directories, the loader also checks the parent config directory's `secrets.yaml` as a fallback. ESPHome recognises both `secrets.yaml` and `secrets.yml` as valid secrets file names (defined as `SECRETS_FILES` in `const.py`).
+
+### `!include` — Include Another YAML File
+
+Splits a large configuration across multiple files. The included file is resolved relative to the current file's directory.
+
+```yaml
+# Simple scalar include — the entire file is inlined
+wifi: !include common/wifi.yaml
+
+# Mapping form — pass variables into the included file
+substitutions: !include
+  file: common/substitutions.yaml
+  vars:
+    device_name: living-room
+    board: esp32dev
+```
+
+The `!include` tag creates a deferred `IncludeFile` object so that substitution variables can appear in the filename path (e.g., `!include device-${platform}.yaml`). The file is only actually loaded once the substitution pass resolves the path.
+
+ESPHome also provides directory-level include variants:
+
+| Tag | Behaviour |
+|---|---|
+| `!include_dir_list` | Returns a list of all `.yaml` files in a directory |
+| `!include_dir_merge_list` | Merges multiple `.yaml` files that each contain a list |
+| `!include_dir_named` | Returns a mapping keyed by filename stem |
+| `!include_dir_merge_named` | Merges multiple `.yaml` files that each contain a mapping |
+
+```yaml
+# Include all sensor YAML files as a merged list
+sensor: !include_dir_merge_list sensors/
+```
+
+### `!lambda` — Inline C++ Expressions
+
+Embeds a C++ expression or statement block directly in YAML. ESPHome compiles the lambda into the generated C++ source.
+
+```yaml
+binary_sensor:
+  - platform: gpio
+    pin: GPIO4
+    name: "Motion Sensor"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("main", "Motion detected! Uptime: %d s", millis() / 1000);
+```
+
+The `|` block scalar style preserves newlines, making multi-line lambdas readable. The `!lambda` tag is represented in the Python runtime as a `Lambda` object (defined in `esphome/core/__init__.py`) and rendered back as `!lambda` when the config is dumped.
+
+### `!env_var` — Read Environment Variables
+
+Reads a value from an environment variable at config-load time. An optional default value follows the variable name, separated by a space:
+
+```yaml
+wifi:
+  ssid: !env_var WIFI_SSID HomeNetwork
+  password: !env_var WIFI_PASSWORD ""
+```
+
+If the variable is not set and no default is provided, the loader raises an error.
+
+### `!extend` and `!remove` — Modify Package Defaults
+
+Used inside the `packages:` system to override or remove keys defined by an included package:
+
+```yaml
+packages:
+  base: !include base-device.yaml
+
+# Override a key from the base package
+wifi:
+  ssid: !extend !secret wifi_ssid
+
+sensor:
+  - id: !remove cpu_temperature   # remove a sensor defined in the package
+```
+
+### `!literal` — Prevent Tag Rewriting
+
+Wraps a value to prevent ESPHome from interpreting or rewriting it further. Useful for values that look like special tags but should be treated as raw strings.
+
+## Multi-Document YAML with `---`
+
+ESPHome supports an optional YAML frontmatter document before the main configuration, separated by `---`. The frontmatter is stored in `CORE.frontmatter` and is ignored by schema validation and code generation — it is purely metadata.
+
+```yaml
+# Optional frontmatter document
+title: "Living Room Sensor"
+author: "Home Team"
+---
+# Main ESPHome configuration starts here
+esphome:
+  name: living-room-sensor
+  friendly_name: Living Room Sensor
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+```
+
+<Note>
+  ESPHome allows at most two YAML documents per file. A file with three or more `---`-separated documents raises an error.
+</Note>
+
+## Substitutions
+
+The `substitutions:` block defines variables that can be referenced elsewhere in the config with `${variable_name}` syntax. Substitutions are applied before schema validation and can appear in any string value, including filenames used with `!include`.
+
+```yaml
+substitutions:
+  device_name: kitchen-plug
+  friendly_name: Kitchen Plug
+  update_interval: 30s
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+sensor:
+  - platform: uptime
+    name: "${friendly_name} Uptime"
+    update_interval: ${update_interval}
+```
+
+You can also pass substitutions on the command line, which override values in the file:
+
+```bash
+esphome -s device_name bedroom-plug -s friendly_name "Bedroom Plug" run my-device.yaml
+```
+
+## Packages
+
+The `packages:` block lets you import reusable configuration fragments. A package is a regular YAML file that is merged into the top-level config during loading.
+
+```yaml
+packages:
+  common_wifi: !include common/wifi.yaml
+  sensors: !include common/sensors.yaml
+```
+
+Packages are merged recursively: list values are concatenated, and mapping values are deep-merged. Keys in the main config take precedence over the same keys in a package.
+
+## Config Validation Flow
+
+When you run `esphome config my-device.yaml`, ESPHome:
+
+1. **Loads** the YAML file with `load_yaml()`, resolving all special tags.
+2. **Validates** the top-level structure and each component's schema using `voluptuous`.
+3. **Prints** the fully-resolved, validated configuration with secret values redacted.
+4. **Reports** `Configuration is valid!` on success, or displays structured error messages with file and line numbers on failure.
+
+```bash
+esphome config my-device.yaml
+```
+
+Errors show the full key path including include boundaries:
+
+```
+In: wifi->password in my-device.yaml 7:12
+  Secret 'wifi_password' not defined
+```
+
+## How Component Names Map to YAML Keys
+
+Every ESPHome component (sensor, switch, light, etc.) registers itself under a YAML key that matches its directory name inside `esphome/components/`. For example, the `uptime` sensor platform is configured under the `sensor:` key with `platform: uptime`:
+
+```yaml
+sensor:
+  - platform: uptime
+    name: "Device Uptime"
+    update_interval: 60s
+
+switch:
+  - platform: gpio
+    pin: GPIO5
+    name: "Relay"
+
+light:
+  - platform: binary
+    name: "Status LED"
+    output: led_output
+```
+
+Special non-component keys that appear at the top level include `substitutions`, `packages`, `globals`, and `external_components`. These are handled directly by the config loading pipeline rather than by individual component validators.
+
+<CardGroup cols={2}>
+  <Card title="First Device" icon="microchip" href="/getting-started/first-device">
+    Walk through the end-to-end workflow: write, validate, compile, and flash.
+  </Card>
+  <Card title="Installation" icon="wrench" href="/getting-started/installation">
+    Install ESPHome via pip, Docker, or the Home Assistant add-on.
+  </Card>
+</CardGroup>

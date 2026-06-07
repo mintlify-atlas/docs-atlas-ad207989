@@ -1,0 +1,299 @@
+---
+title: "Climate Component: HVAC and Thermostat Control in ESPHome"
+sidebarTitle: "Climate"
+description: "Configure HVAC, thermostat, and climate control in ESPHome. Covers modes, fan modes, swing modes, presets, visual settings, triggers, and bang_bang/PID/thermostat platforms."
+---
+
+The `climate:` component models HVAC systems, thermostats, and other temperature-control devices. It exposes rich state to Home Assistant — operating mode, fan mode, swing mode, preset, current temperature, target temperature, and humidity — and accepts commands through the `climate.control` action. This page covers the full shared configuration, all mode enumerations, automation triggers, the control action, and examples of the most popular platform implementations.
+
+## Base Configuration
+
+```yaml
+climate:
+  - platform: <platform_name>
+    name: "Living Room AC"      # Entity name exposed to HA / MQTT
+    id: living_room_ac          # C++ variable ID for automations
+    icon: "mdi:air-conditioner" # MDI icon string
+    entity_category: ""         # "" | diagnostic | config
+    visual:                     # Override HA UI display range
+      min_temperature: 16 °C
+      max_temperature: 30 °C
+      temperature_step: 0.5 °C  # or separate target/current steps
+      min_humidity: 30
+      max_humidity: 80
+    on_state: ...               # Automation triggers
+    on_control: ...
+```
+
+### Visual Overrides
+
+The `visual:` block customises the temperature slider and display in the Home Assistant frontend without affecting the hardware limits. `temperature_step` can be a single value applied to both target and current temperature, or separate values:
+
+```yaml
+visual:
+  min_temperature: 10
+  max_temperature: 35
+  temperature_step:
+    target_temperature: 0.5
+    current_temperature: 0.1
+```
+
+---
+
+## Climate Modes
+
+Climate modes control the overall operating mode of the device.
+
+| Value | C++ Enum | Description |
+|---|---|---|
+| `OFF` | `CLIMATE_MODE_OFF` | System is off |
+| `HEAT_COOL` | `CLIMATE_MODE_HEAT_COOL` | Automatic heat/cool (range setpoint) |
+| `COOL` | `CLIMATE_MODE_COOL` | Cooling only |
+| `HEAT` | `CLIMATE_MODE_HEAT` | Heating only |
+| `DRY` | `CLIMATE_MODE_DRY` | Dehumidification |
+| `FAN_ONLY` | `CLIMATE_MODE_FAN_ONLY` | Ventilation without heating/cooling |
+| `AUTO` | `CLIMATE_MODE_AUTO` | Platform-specific auto mode |
+
+---
+
+## Fan Modes
+
+Fan speed and pattern for platforms that expose fan control.
+
+| Value | C++ Enum | Description |
+|---|---|---|
+| `ON` | `CLIMATE_FAN_ON` | Fan always on |
+| `OFF` | `CLIMATE_FAN_OFF` | Fan off |
+| `AUTO` | `CLIMATE_FAN_AUTO` | Automatic fan speed |
+| `LOW` | `CLIMATE_FAN_LOW` | Low speed |
+| `MEDIUM` | `CLIMATE_FAN_MEDIUM` | Medium speed |
+| `HIGH` | `CLIMATE_FAN_HIGH` | High speed |
+| `MIDDLE` | `CLIMATE_FAN_MIDDLE` | Middle speed |
+| `FOCUS` | `CLIMATE_FAN_FOCUS` | Focused / concentrated flow |
+| `DIFFUSE` | `CLIMATE_FAN_DIFFUSE` | Diffused / wide flow |
+| `QUIET` | `CLIMATE_FAN_QUIET` | Quiet / silent mode |
+
+Platforms can also expose custom fan modes as strings via `custom_fan_mode`.
+
+---
+
+## Swing Modes
+
+Louvre/vane swing direction for split-system ACs.
+
+| Value | C++ Enum | Description |
+|---|---|---|
+| `OFF` | `CLIMATE_SWING_OFF` | Swing disabled |
+| `BOTH` | `CLIMATE_SWING_BOTH` | Swing on both axes |
+| `VERTICAL` | `CLIMATE_SWING_VERTICAL` | Vertical swing |
+| `HORIZONTAL` | `CLIMATE_SWING_HORIZONTAL` | Horizontal swing |
+
+---
+
+## Preset Modes
+
+Named presets for common usage scenarios.
+
+| Value | C++ Enum |
+|---|---|
+| `NONE` | `CLIMATE_PRESET_NONE` |
+| `ECO` | `CLIMATE_PRESET_ECO` |
+| `AWAY` | `CLIMATE_PRESET_AWAY` |
+| `BOOST` | `CLIMATE_PRESET_BOOST` |
+| `COMFORT` | `CLIMATE_PRESET_COMFORT` |
+| `HOME` | `CLIMATE_PRESET_HOME` |
+| `SLEEP` | `CLIMATE_PRESET_SLEEP` |
+| `ACTIVITY` | `CLIMATE_PRESET_ACTIVITY` |
+
+Platforms can also define custom preset strings via `custom_preset`.
+
+---
+
+## Automation Triggers
+
+<CardGroup cols={2}>
+  <Card title="on_state" icon="circle-dot">
+    Fires whenever the climate entity state changes (mode, temperature, fan mode, etc.).
+    Variable `x` is a reference to the `Climate` object.
+  </Card>
+  <Card title="on_control" icon="sliders">
+    Fires when a `climate.control` action is received, **before** the platform applies it.
+    Variable `x` is a reference to the `ClimateCall` object containing the requested changes.
+  </Card>
+</CardGroup>
+
+```yaml
+climate:
+  - platform: bang_bang
+    ...
+    on_state:
+      then:
+        - logger.log:
+            format: "Climate mode changed to %d"
+            args: ["(int) x.mode"]
+    on_control:
+      then:
+        - logger.log: "Climate control received"
+```
+
+---
+
+## climate.control Action
+
+Use `climate.control` to programmatically change any aspect of the climate entity from automations.
+
+```yaml
+action:
+  - climate.control:
+      id: living_room_ac
+      mode: COOL
+      target_temperature: 22.0
+      fan_mode: AUTO
+      swing_mode: VERTICAL
+      preset: ECO
+```
+
+<Accordion title="climate.control parameters">
+
+| Key | Type | Description |
+|---|---|---|
+| `mode` | ClimateMode | Operating mode (OFF, HEAT, COOL, etc.) |
+| `target_temperature` | float (°C) | Single target temperature |
+| `target_temperature_low` | float (°C) | Lower bound for HEAT_COOL mode |
+| `target_temperature_high` | float (°C) | Upper bound for HEAT_COOL mode |
+| `target_humidity` | integer (%) | Target humidity percentage |
+| `fan_mode` | ClimateFanMode | Standard fan mode |
+| `custom_fan_mode` | string | Platform-specific fan mode string |
+| `preset` | ClimatePreset | Standard preset |
+| `custom_preset` | string | Platform-specific preset string |
+| `swing_mode` | ClimateSwingMode | Swing direction |
+
+</Accordion>
+
+All values support templating via `!lambda`:
+
+```yaml
+action:
+  - climate.control:
+      id: thermostat
+      target_temperature: !lambda "return id(schedule_temp).state;"
+```
+
+---
+
+## Platform Examples
+
+<Tabs>
+  <Tab title="Bang-Bang Thermostat">
+
+The simplest thermostat — drives a heater or cooler with hysteresis. Requires a current temperature sensor.
+
+```yaml
+climate:
+  - platform: bang_bang
+    name: "Greenhouse Thermostat"
+    sensor: greenhouse_temp          # id of a sensor component
+    default_target_temperature_low: 18 °C
+    default_target_temperature_high: 22 °C
+    visual:
+      min_temperature: 10
+      max_temperature: 35
+      temperature_step: 0.5
+    heat_action:
+      - switch.turn_on: heater_relay
+    cool_action:
+      - switch.turn_on: fan_relay
+    idle_action:
+      - switch.turn_off: heater_relay
+      - switch.turn_off: fan_relay
+```
+
+  </Tab>
+  <Tab title="PID Controller">
+
+A PID climate component drives a continuous output (e.g. PWM heater) using proportional-integral-derivative control.
+
+```yaml
+climate:
+  - platform: pid
+    name: "Incubator PID"
+    sensor: incubator_temp
+    default_target_temperature: 37.5 °C
+    cool_output: cooling_pwm
+    heat_output: heating_pwm
+    control_parameters:
+      kp: 0.5
+      ki: 0.003
+      kd: 0.05
+    visual:
+      min_temperature: 20
+      max_temperature: 45
+      temperature_step: 0.1
+```
+
+  </Tab>
+  <Tab title="Thermostat Platform">
+
+The full-featured `thermostat` platform supports multiple modes, hysteresis, minimum idle time, and preset temperatures.
+
+```yaml
+climate:
+  - platform: thermostat
+    name: "Home Thermostat"
+    sensor: room_temp
+    visual:
+      min_temperature: 15 °C
+      max_temperature: 30 °C
+      temperature_step: 0.5 °C
+    preset:
+      - name: Home
+        default_target_temperature_low: 20 °C
+        default_target_temperature_high: 24 °C
+      - name: Sleep
+        default_target_temperature_low: 18 °C
+        default_target_temperature_high: 20 °C
+      - name: Away
+        default_target_temperature_low: 15 °C
+        default_target_temperature_high: 28 °C
+    heat_action:
+      - switch.turn_on: heater
+    cool_action:
+      - switch.turn_on: cooler
+    idle_action:
+      - switch.turn_off: heater
+      - switch.turn_off: cooler
+    min_idle_time: 30s
+    min_heating_off_time: 5min
+    min_heating_run_time: 5min
+    min_cooling_off_time: 5min
+    min_cooling_run_time: 5min
+```
+
+  </Tab>
+  <Tab title="Template Climate">
+
+A fully custom climate that delegates all logic to lambdas and automations. Useful for bridging to IR blasters or proprietary protocols.
+
+```yaml
+climate:
+  - platform: template
+    name: "IR AC"
+    supports_cool: true
+    supports_heat: false
+    current_temperature_template: "{{ id(room_temp).state }}"
+    set_temperature_action:
+      - logger.log:
+          format: "Target temperature: %.1f"
+          args: ["x"]
+    set_mode_action:
+      - logger.log:
+          format: "Mode: %d"
+          args: ["(int) x"]
+```
+
+  </Tab>
+</Tabs>
+
+<Tip>
+When using `bang_bang` or `thermostat`, the `sensor:` key must reference the `id` of a `sensor:` component already defined in your configuration. The sensor's `update_interval` directly affects how quickly the thermostat responds to temperature changes.
+</Tip>

@@ -1,0 +1,461 @@
+---
+title: "Display Component: Screens and E-ink Displays in ESPHome"
+sidebarTitle: "Display"
+description: "Drive OLED, TFT, e-ink, and segment displays in ESPHome. Covers the lambda render loop, fonts, images, drawing primitives, pages, and popular platform drivers."
+---
+
+The `display:` component provides a unified rendering API for every screen type supported by ESPHome — from tiny 128×64 OLED modules and 7-segment LED displays to large colour TFT panels and slow-refresh e-ink displays. All drawing is done inside a C++ lambda called the *render function*, which ESPHome re-runs every `update_interval`. This page covers the render lambda, font and image loading, every drawing primitive, the pages system, and practical platform examples.
+
+## How Display Rendering Works
+
+ESPHome calls your render lambda on a fixed schedule. Inside the lambda, you call drawing methods on the display reference `it` to paint the frame. For buffered displays, the entire buffer is sent to the hardware at the end of each render cycle.
+
+```yaml
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 1s
+    lambda: |-
+      it.print(0, 0, id(font_small), "Hello, ESPHome!");
+```
+
+The lambda receives a single argument `it` of type `Display &`. All primitive methods are called on `it`.
+
+---
+
+## Base Configuration
+
+```yaml
+display:
+  - platform: <platform_name>
+    id: my_display              # C++ variable ID (optional)
+    update_interval: 1s         # How often to re-render; use "never" to disable
+    rotation: 0                 # 0 | 90 | 180 | 270 degrees
+    auto_clear_enabled: true    # Clear the buffer before each render cycle
+    lambda: |-                  # Render function (exclusive with pages:)
+      ...
+    pages:                      # Multi-page setup (exclusive with lambda:)
+      - id: page_main
+        lambda: |-
+          ...
+      - id: page_sensors
+        lambda: |-
+          ...
+    on_page_change:             # Automation on page transition
+      from: page_main
+      to: page_sensors
+      then:
+        - logger.log: "Page changed"
+```
+
+<Note>
+`lambda:` and `pages:` are mutually exclusive. Use `lambda:` for a single static screen and `pages:` for multi-page navigation.
+</Note>
+
+<Tip>
+Set `update_interval: never` if you want to control rendering manually from automations using `component.update: my_display`.
+</Tip>
+
+---
+
+## Fonts
+
+Fonts must be declared as a top-level `font:` component and referenced by their `id` inside the display lambda. ESPHome supports TrueType/OpenType font files and includes a built-in bitmap font.
+
+```yaml
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font_medium
+    size: 20
+    glyphs: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz .:-°%"
+
+  - file: "gfonts://Roboto"   # Google Fonts shorthand
+    id: font_large
+    size: 48
+
+  - file: "builtins/Roboto-Regular.ttf"   # bundled font
+    id: font_small
+    size: 14
+```
+
+- `file`: Path to a `.ttf` or `.otf` file, or a `gfonts://` URL for Google Fonts.
+- `size`: Font size in points.
+- `glyphs`: A string of all characters you need. Only requested glyphs are compiled in, saving flash.
+
+---
+
+## Images
+
+Images are pre-processed at compile time and stored in flash.
+
+```yaml
+image:
+  - file: "images/logo.png"
+    id: logo_img
+    type: BINARY        # BINARY | GRAYSCALE | RGB565 | RGBA
+    resize: 64x32       # optional resize
+    dither: NONE        # NONE | FLOYDSTEINBERG
+```
+
+Use `it.image(x, y, id(logo_img))` in the render lambda to draw an image.
+
+---
+
+## Drawing Primitives
+
+All coordinates are in pixels from the top-left corner. Positive X goes right; positive Y goes down.
+
+### Text Methods
+
+<AccordionGroup>
+
+<Accordion title="print">
+
+Draw a static string at `(x, y)` using a font and optional alignment/color.
+
+```cpp
+it.print(0, 0, id(font_medium), "Static text");
+// with alignment:
+it.print(64, 0, id(font_medium), TextAlign::CENTER, "Centered");
+```
+
+</Accordion>
+
+<Accordion title="printf">
+
+Draw a formatted string (C `printf` style).
+
+```cpp
+it.printf(0, 20, id(font_small), "Temp: %.1f °C", id(room_temp).state);
+it.printf(0, 40, id(font_small), "Humidity: %d%%", (int) id(humidity).state);
+```
+
+</Accordion>
+
+<Accordion title="strftime">
+
+Draw a formatted date/time string using `strftime` format codes. Requires a `time:` component.
+
+```cpp
+it.strftime(0, 0, id(font_medium), "%H:%M:%S", id(sntp_time).now());
+it.strftime(0, 20, id(font_small), "%A, %d %B %Y", id(sntp_time).now());
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+### Shape Methods
+
+<AccordionGroup>
+
+<Accordion title="line">
+
+```cpp
+it.line(x1, y1, x2, y2);
+it.line(x1, y1, x2, y2, COLOR_ON);   // explicit color
+```
+
+</Accordion>
+
+<Accordion title="rectangle / filled_rectangle">
+
+```cpp
+it.rectangle(x, y, width, height);
+it.filled_rectangle(x, y, width, height);
+```
+
+</Accordion>
+
+<Accordion title="circle / filled_circle">
+
+```cpp
+it.circle(center_x, center_y, radius);
+it.filled_circle(center_x, center_y, radius);
+```
+
+</Accordion>
+
+<Accordion title="triangle / filled_triangle">
+
+```cpp
+it.triangle(x1, y1, x2, y2, x3, y3);
+it.filled_triangle(x1, y1, x2, y2, x3, y3);
+```
+
+</Accordion>
+
+<Accordion title="image">
+
+```cpp
+it.image(x, y, id(my_image));
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+### Color
+
+For monochrome displays `COLOR_ON` and `COLOR_OFF` represent the two states. For colour displays use `Color(r, g, b)` or `Color(r, g, b, a)`.
+
+```cpp
+// Monochrome
+it.filled_rectangle(0, 0, 128, 16, COLOR_ON);
+it.print(4, 0, id(font_small), COLOR_OFF, "Inverted text");
+
+// Colour (TFT/ILI9xxx)
+it.filled_rectangle(0, 0, 240, 30, Color(0x1F, 0x3B, 0xFF));   // blue header
+it.print(4, 4, id(font_medium), Color(255, 255, 255), "Hello");  // white text
+```
+
+---
+
+## Pages
+
+Pages let you divide display content into named screens and switch between them from automations.
+
+```yaml
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    pages:
+      - id: page_clock
+        lambda: |-
+          it.strftime(64, 32, id(font_large), TextAlign::CENTER, "%H:%M", id(ntp).now());
+      - id: page_sensors
+        lambda: |-
+          it.printf(0, 0, id(font_small), "T: %.1f °C", id(temp).state);
+          it.printf(0, 16, id(font_small), "H: %.0f %%", id(hum).state);
+      - id: page_status
+        lambda: |-
+          it.print(0, 0, id(font_small), id(wifi_info).get_ssid().c_str());
+```
+
+### Page Actions
+
+```yaml
+# Show a specific page
+action:
+  - display.page.show: page_sensors
+
+# Cycle forward through pages
+action:
+  - display.page.show_next: my_display
+
+# Cycle backward through pages
+action:
+  - display.page.show_previous: my_display
+```
+
+### Page Condition
+
+```yaml
+condition:
+  - display.is_displaying_page: page_clock
+```
+
+### on_page_change Trigger
+
+```yaml
+on_page_change:
+  - from: page_clock
+    to: page_sensors
+    then:
+      - logger.log: "Switched to sensor page"
+```
+
+---
+
+## Platform Examples
+
+<Tabs>
+  <Tab title="SSD1306 (OLED I²C)">
+
+The most common 128×64 OLED display, connected over I²C.
+
+```yaml
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: roboto14
+    size: 14
+  - file: "fonts/Roboto-Regular.ttf"
+    id: roboto24
+    size: 24
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 5s
+    lambda: |-
+      it.printf(0, 0, id(roboto14), "Temp: %.1f °C", id(temp).state);
+      it.printf(0, 18, id(roboto14), "Humidity: %.0f %%", id(hum).state);
+      it.strftime(0, 40, id(roboto24), "%H:%M", id(sntp).now());
+```
+
+  </Tab>
+  <Tab title="ILI9xxx (TFT Colour)">
+
+A 240×320 colour TFT display connected over SPI, common in round-screen and panel projects.
+
+```yaml
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_ui
+    size: 24
+
+color:
+  - id: red
+    red: 100%
+  - id: white
+    red: 100%
+    green: 100%
+    blue: 100%
+
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    dc_pin: GPIO2
+    reset_pin: GPIO4
+    cs_pin: GPIO5
+    rotation: 90
+    update_interval: 1s
+    lambda: |-
+      it.fill(Color(0, 0, 0));   # black background
+      it.printf(10, 10, id(font_ui), id(white), "%.1f °C", id(temp).state);
+      it.filled_rectangle(0, 0, 240, 4, id(red));   # top border
+```
+
+  </Tab>
+  <Tab title="Waveshare E-Paper">
+
+E-ink/e-paper display with full and partial refresh modes.
+
+```yaml
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO14
+
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font_epd
+    size: 20
+
+display:
+  - platform: waveshare_epaper
+    model: 2.90in
+    cs_pin: GPIO15
+    dc_pin: GPIO27
+    busy_pin: GPIO25
+    reset_pin: GPIO26
+    rotation: 90
+    update_interval: 60s
+    lambda: |-
+      it.fill(COLOR_OFF);
+      it.printf(0, 0, id(font_epd), "%.1f °C", id(temp).state);
+      it.strftime(0, 30, id(font_epd), "%a %d %b", id(sntp).now());
+```
+
+<Note>
+E-paper displays consume no power when idle. Set `update_interval` to a suitably long value (30 s–5 min) to preserve display lifetime and minimise ghosting.
+</Note>
+
+  </Tab>
+  <Tab title="TM1637 (7-Segment)">
+
+Four or six digit 7-segment LED display connected over a clock/data pair.
+
+```yaml
+display:
+  - platform: tm1637
+    clk_pin: GPIO5
+    dio_pin: GPIO4
+    update_interval: 1s
+    lambda: |-
+      it.strftime("%H%M", id(sntp).now());
+```
+
+  </Tab>
+  <Tab title="MAX7219 (8×8 Matrix)">
+
+Cascaded MAX7219 LED matrix modules driven over SPI.
+
+```yaml
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+
+display:
+  - platform: max7219digit
+    cs_pin: GPIO5
+    num_chips: 4
+    update_interval: 100ms
+    scroll_mode: CONTINUOUS
+    lambda: |-
+      it.print(0, 0, id(font_small), "ESPHome");
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## Complete Multi-Page Example
+
+```yaml
+time:
+  - platform: sntp
+    id: ntp
+
+font:
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font14
+    size: 14
+  - file: "fonts/Roboto-Regular.ttf"
+    id: font32
+    size: 32
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO0
+    name: "Page Button"
+    on_press:
+      then:
+        - display.page.show_next: my_oled
+
+display:
+  - platform: ssd1306_i2c
+    id: my_oled
+    model: "SSD1306 128x64"
+    address: 0x3C
+    update_interval: 1s
+    auto_clear_enabled: true
+    pages:
+      - id: pg_time
+        lambda: |-
+          it.strftime(64, 24, id(font32), TextAlign::CENTER, "%H:%M", id(ntp).now());
+          it.strftime(64, 52, id(font14), TextAlign::CENTER, "%d %b %Y", id(ntp).now());
+      - id: pg_env
+        lambda: |-
+          it.printf(0,  0, id(font14), "Temp:    %.1f C", id(temp).state);
+          it.printf(0, 18, id(font14), "Humidity: %.0f%%", id(hum).state);
+          it.printf(0, 36, id(font14), "CO2:  %d ppm", (int) id(co2).state);
+      - id: pg_wifi
+        lambda: |-
+          it.print(0, 0,  id(font14), "IP:");
+          it.print(0, 18, id(font14), id(wifi_comp).get_ip_address().str().c_str());
+    on_page_change:
+      then:
+        - logger.log: "Display page changed"
+```

@@ -1,0 +1,329 @@
+---
+title: "Building Custom and External ESPHome Components"
+sidebarTitle: "Custom Components"
+description: "Learn how to write custom ESPHome components in Python and C++, and how to load external components from GitHub or a local path."
+---
+
+ESPHome's component system lets you extend the firmware with your own Python-and-C++ modules — either by loading a published package through the `external_components:` key or by writing a component from scratch in your config directory. This page explains both paths: how to pull in an external component source, and how to structure, validate, and code-generate a fully custom component.
+
+## External Components
+
+The `external_components:` top-level key tells ESPHome to load additional components from a Git repository or a local directory before the rest of the config is validated. The schema (defined in `esphome/components/external_components/__init__.py`) is a list of source entries:
+
+```yaml
+external_components:
+  # Pull one component from a GitHub repo at a specific tag
+  - source:
+      type: git
+      url: https://github.com/example/my-esphome-components
+      ref: v1.2.0           # branch, tag, or full SHA
+      path: components      # sub-directory inside the repo (optional)
+    components: [my_sensor] # list of component names to import, or omit for "all"
+    refresh: 1d             # how often to re-fetch; default 1d, "0s" = always
+
+  # Or reference a directory on disk, relative to this YAML file
+  - source:
+      type: local
+      path: ../shared_components
+    components: [my_switch, my_display]
+```
+
+<Accordion title="Source schema details">
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `type` | Yes | `git` or `local` |
+| `url` | Git only | HTTPS URL of the repository |
+| `ref` | Git only | Branch, tag, or commit SHA to check out |
+| `path` | Git only | Sub-directory within the repo that contains the components folder. ESPHome also searches `esphome/components/` and `components/` automatically. |
+| `username` / `password` | Git only | HTTP basic auth for private repos |
+| `path` | Local only | Filesystem path relative to the YAML config file |
+
+</Accordion>
+
+<Note>
+When `components` is set to `"all"` and the repository contains more than 100 component directories, ESPHome raises a validation error and forces you to list components explicitly. This prevents accidentally pulling an entire ESPHome fork.
+</Note>
+
+The `refresh:` value accepts any ESPHome time string (`0s`, `1h`, `7d`, `never`). Set it to `0s` during development so ESPHome always fetches the latest revision, and restore it to `1d` or longer in production.
+
+## Writing a Custom Component
+
+Custom components that live next to your YAML file go in a `custom_components/` directory:
+
+```
+my_device.yaml
+custom_components/
+  gpio_voltage/
+    __init__.py     # Python: schema + code-gen
+    gpio_voltage.h  # C++: runtime implementation
+```
+
+### Directory and Module Structure
+
+Every component directory must contain at least `__init__.py`. The module exposes a few well-known names that ESPHome's loader looks for:
+
+```python
+# custom_components/gpio_voltage/__init__.py
+
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.const import CONF_ID, CONF_PIN, CONF_UPDATE_INTERVAL
+
+# Optional metadata -----------------------------------------------------------
+
+# GitHub handles of people who maintain this component
+CODEOWNERS = ["@yourgithubhandle"]
+
+# Other ESPHome components this one requires to be loaded first
+DEPENDENCIES = ["esp32"]           # e.g. platform constraint
+AUTO_LOAD   = []                   # components loaded automatically with this one
+
+# Set to True when this module is a *platform* (e.g. sensor.gpio_voltage)
+IS_PLATFORM_COMPONENT = False
+
+# C++ namespace ---------------------------------------------------------------
+
+gpio_voltage_ns = cg.esphome_ns.namespace("gpio_voltage")
+GpioVoltageComponent = gpio_voltage_ns.class_(
+    "GpioVoltageComponent", cg.PollingComponent
+)
+
+# Config schema ---------------------------------------------------------------
+
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(GpioVoltageComponent),
+        cv.Required(CONF_PIN): cv.pin,
+        cv.Optional(CONF_UPDATE_INTERVAL, default="60s"): cv.update_interval,
+    }
+).extend(cv.COMPONENT_SCHEMA)
+
+# Code generation -------------------------------------------------------------
+
+async def to_code(config):
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+
+    pin = await cg.gpio_pin_expression(config[CONF_PIN])
+    cg.add(var.set_pin(pin))
+```
+
+<Steps>
+  <Step title="Declare C++ types">
+    Use `cg.esphome_ns.namespace()` and `.class_()` to declare the C++ namespace and class without writing any C++ at this stage. These objects are used later to create instances and call methods.
+  </Step>
+  <Step title="Define CONFIG_SCHEMA">
+    Build a `cv.Schema({...})` with `cv.Required` and `cv.Optional` fields. Always include `cv.GenerateID()` so ESPHome can auto-generate the C++ variable name. Extend with `cv.COMPONENT_SCHEMA` (or `cv.POLLING_COMPONENT_SCHEMA`) to inherit the standard `setup_priority`, `update_interval`, etc. keys.
+  </Step>
+  <Step title="Implement to_code">
+    `to_code(config)` is an `async` coroutine that ESPHome calls during code generation. Use it to create C++ objects, call setter methods, and register the component.
+  </Step>
+</Steps>
+
+### Config Validation (`cv`) Reference
+
+`esphome.config_validation` (imported as `cv`) wraps [Voluptuous](https://github.com/alecthomas/voluptuous) with ESPHome-specific helpers.
+
+<CodeGroup>
+
+```python Common scalar validators
+cv.string          # any value coerced to str
+cv.boolean         # true/false, yes/no, on/off → bool
+cv.int_            # integer
+cv.float_          # floating-point number
+cv.positive_float  # float > 0
+cv.int_range(min=0, max=255)   # bounded integer
+cv.float_range(min=0.0)        # bounded float
+cv.update_interval  # time string "60s", "1min", "never" → TimePeriod
+cv.pin             # GPIO pin number or map
+```
+
+```python ID and reference validators
+cv.declare_id(MyClass)   # declare a new C++ ID of type MyClass
+cv.use_id(MyClass)       # reference an already-declared ID
+cv.GenerateID()          # shorthand for Optional(CONF_ID, default=AUTO)
+```
+
+```python Schema field wrappers
+cv.Required("key")           # field must be present
+cv.Optional("key")           # field may be absent
+cv.Optional("key", default=42) # field with a default value
+```
+
+```python Platform/framework guards
+cv.only_on(["esp32", "rp2040"])         # valid only on listed platforms
+cv.only_with_framework(["esp-idf"])     # valid only with listed frameworks
+```
+
+</CodeGroup>
+
+### Code Generation (`cg`) Reference
+
+`esphome.codegen` (imported as `cg`) is the single import for all C++ code-generation helpers. Key functions:
+
+| Function | What it does |
+|----------|-------------|
+| `cg.new_Pvariable(id, *args)` | Declares `MyClass *id = new MyClass(args);` |
+| `cg.add(expr)` | Emits a statement in `setup()`, e.g. `cg.add(var.set_pin(pin))` |
+| `cg.add_define("FOO")` | Adds `#define FOO` to the generated header |
+| `cg.add_build_flag("-DDEBUG")` | Adds a compiler flag via PlatformIO |
+| `cg.add_library("ArduinoJson", "6.21.3")` | Adds a PlatformIO library dependency |
+| `await cg.register_component(var, config)` | Calls `App.register_component(var)` and applies `setup_priority`, `update_interval` |
+| `await cg.register_parented(var, parent_id)` | Calls `var.set_parent(parent)` |
+| `await cg.gpio_pin_expression(conf)` | Resolves a pin config map to a `GPIOPin *` expression |
+| `await cg.get_variable(id)` | Looks up a previously declared ID |
+
+### Complete Example: GPIO Voltage Sensor
+
+This minimal but complete example creates a `PollingComponent` that reads a GPIO pin and publishes the raw digital state as a floating-point sensor value.
+
+<CodeGroup>
+
+```python __init__.py
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.components import sensor
+from esphome.const import (
+    CONF_ID,
+    CONF_PIN,
+    CONF_UPDATE_INTERVAL,
+    DEVICE_CLASS_VOLTAGE,
+    STATE_CLASS_MEASUREMENT,
+    UNIT_VOLT,
+)
+
+CODEOWNERS = ["@yourgithubhandle"]
+DEPENDENCIES = []
+AUTO_LOAD = ["sensor"]
+
+gpio_voltage_ns = cg.esphome_ns.namespace("gpio_voltage")
+GpioVoltageSensor = gpio_voltage_ns.class_(
+    "GpioVoltageSensor", cg.PollingComponent, sensor.Sensor
+)
+
+CONFIG_SCHEMA = (
+    sensor.sensor_schema(
+        GpioVoltageSensor,
+        unit_of_measurement=UNIT_VOLT,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_VOLTAGE,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
+    .extend(
+        {
+            cv.Required(CONF_PIN): cv.pin,
+        }
+    )
+    .extend(cv.polling_component_schema("60s"))
+)
+
+
+async def to_code(config):
+    var = await sensor.new_sensor(config)
+    await cg.register_component(var, config)
+
+    pin = await cg.gpio_pin_expression(config[CONF_PIN])
+    cg.add(var.set_pin(pin))
+```
+
+```cpp gpio_voltage.h
+#pragma once
+
+#include "esphome/core/component.h"
+#include "esphome/core/hal.h"
+#include "esphome/components/sensor/sensor.h"
+
+namespace esphome {
+namespace gpio_voltage {
+
+class GpioVoltageSensor : public PollingComponent,
+                          public sensor::Sensor {
+ public:
+  void set_pin(InternalGPIOPin *pin) { pin_ = pin; }
+
+  void setup() override {
+    pin_->setup();
+    pin_->pin_mode(gpio::FLAG_INPUT);
+  }
+
+  void update() override {
+    // Read the digital state; publish as 0.0 V or 3.3 V
+    float voltage = pin_->digital_read() ? 3.3f : 0.0f;
+    publish_state(voltage);
+  }
+
+  float get_setup_priority() const override {
+    return setup_priority::DATA;
+  }
+
+ protected:
+  InternalGPIOPin *pin_;
+};
+
+}  // namespace gpio_voltage
+}  // namespace esphome
+```
+
+```yaml my_device.yaml
+external_components:
+  - source:
+      type: local
+      path: custom_components
+
+sensor:
+  - platform: gpio_voltage
+    name: "Door Sensor Voltage"
+    pin: GPIO4
+    update_interval: 5s
+```
+
+</CodeGroup>
+
+<Tip>
+Inherit from `PollingComponent` and call `set_update_interval(…)` via `cg.register_component` rather than implementing your own timer. ESPHome's scheduler manages the call cadence for you.
+</Tip>
+
+### Inheriting from Built-in Base Classes
+
+ESPHome provides C++ base classes for every entity type. Choose the right one and ESPHome's core handles Home Assistant discovery, filtering, and MQTT publishing automatically.
+
+| C++ base class | Python type object | Use for |
+|----------------|--------------------|---------|
+| `sensor::Sensor` | `sensor.Sensor` | Numeric measurements |
+| `binary_sensor::BinarySensor` | `binary_sensor.BinarySensor` | On/off state |
+| `switch_::Switch` | `switch_.Switch` | Controllable on/off |
+| `text_sensor::TextSensor` | `text_sensor.TextSensor` | String values |
+| `output::FloatOutput` | `output.FloatOutput` | PWM / DAC |
+| `cover::Cover` | `cover.Cover` | Window covers |
+| `climate::Climate` | `climate.Climate` | Thermostat |
+
+Platform components (e.g. `sensor.my_platform`) set `IS_PLATFORM_COMPONENT = True` in the parent component's `__init__.py` and use `sensor.sensor_schema()` / `sensor.new_sensor()` helpers from `esphome/components/sensor/__init__.py`.
+
+### Registering Automation Triggers, Actions, and Conditions
+
+Use the `automation` module to expose triggers, actions, and conditions that users can reference in their YAML automations.
+
+```python
+from esphome import automation
+from esphome.automation import Action, Condition
+
+# Declare an action type in C++
+MyToggleAction = gpio_voltage_ns.class_("MyToggleAction", automation.Action)
+
+# Register the action so it appears as `gpio_voltage.toggle` in YAML
+@automation.register_action(
+    "gpio_voltage.toggle",
+    MyToggleAction,
+    cv.Schema({cv.GenerateID(): cv.use_id(GpioVoltageSensor)}),
+    synchronous=False,
+)
+async def gpio_voltage_toggle_action_to_code(config, action_id, template_arg, args):
+    paren = await cg.get_variable(config[CONF_ID])
+    var = cg.new_Pvariable(action_id, template_arg, paren)
+    return var
+```
+
+<Warning>
+The `synchronous=` parameter is required when calling `register_action`. Omitting it raises a `TypeError` at component load time. Use `synchronous=True` for actions that complete immediately, and `synchronous=False` for coroutine actions.
+</Warning>

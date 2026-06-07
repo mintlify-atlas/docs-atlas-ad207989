@@ -1,0 +1,499 @@
+---
+title: "Light Component: Addressable and Simple Lighting in ESPHome"
+sidebarTitle: "Light"
+description: "Configure binary, monochromatic, RGB, RGBW, and addressable LED lights in ESPHome. Covers effects, transitions, restore_mode, color correction, and popular platforms."
+---
+
+The `light:` component covers everything from a single on/off LED to a 1000-pixel NeoPixel strip with full RGB animation. ESPHome models lights in terms of their color capability — binary, monochromatic (brightness-only), RGB, RGBW/RGBWW, and addressable — each inheriting a progressively richer configuration schema. This page explains every base option, the effects system, automation triggers and actions, and platform-specific examples.
+
+## Light Types
+
+ESPHome organises lights into four capability tiers that determine which effects, transitions, and color channels are available.
+
+<CardGroup cols={2}>
+  <Card title="Binary" icon="lightbulb">
+    Simple on/off with no brightness control. Examples: relay-switched bulb, status LED.
+  </Card>
+  <Card title="Monochromatic (Brightness-Only)" icon="sun">
+    Single brightness channel with smooth transitions and pulse/flicker effects. Examples: PWM-dimmed LED, LEDC output.
+  </Card>
+  <Card title="RGB / RGBW / RGBWW / Color Temperature" icon="palette">
+    Full color control with hue, saturation, and brightness. RGBW adds a dedicated white channel; color temperature lights have cold and warm white channels.
+  </Card>
+  <Card title="Addressable" icon="strip-map">
+    Per-LED control over color and brightness for LED strips. Supports rainbow, wipe, scan, twinkle, fireworks, and lambda effects.
+  </Card>
+</CardGroup>
+
+---
+
+## Base Configuration
+
+All light types share these configuration keys.
+
+```yaml
+light:
+  - platform: <platform_name>
+    name: "Living Room Light"           # Entity name exposed to HA / MQTT
+    id: living_room_light               # C++ variable ID for automations
+    icon: "mdi:ceiling-light"           # MDI icon string
+    entity_category: ""                 # "" | diagnostic | config
+    restore_mode: ALWAYS_OFF            # Boot/restore behaviour (see below)
+    default_transition_length: 1s       # Default transition time (monochromatic+)
+    flash_transition_length: 0s         # Transition for flash actions
+    gamma_correct: 2.8                  # Gamma correction factor (monochromatic+)
+    color_correct: [100%, 100%, 100%]   # Per-channel scale (addressable only)
+    effects: []                         # Named effects list (see Effects section)
+    initial_state:                      # Force a specific state at first boot
+      state: true
+      brightness: 50%
+```
+
+### Restore Modes
+
+| Value | Behaviour |
+|---|---|
+| `RESTORE_DEFAULT_OFF` | Restore last state; default to OFF |
+| `RESTORE_DEFAULT_ON` | Restore last state; default to ON |
+| `RESTORE_INVERTED_DEFAULT_OFF` | Restore inverted state; default to OFF |
+| `RESTORE_INVERTED_DEFAULT_ON` | Restore inverted state; default to ON |
+| `RESTORE_AND_OFF` | Restore color/brightness but always start OFF |
+| `RESTORE_AND_ON` | Restore color/brightness but always start ON |
+| `ALWAYS_OFF` | Always start OFF (**default**) |
+| `ALWAYS_ON` | Always start ON |
+
+### Gamma Correction
+
+The `gamma_correct` value (default `2.8`) compensates for the non-linear perceived brightness of LEDs. A 256-entry lookup table is generated at compile time and applied to all brightness values. Set to `0` to disable.
+
+### Color Correction
+
+`color_correct` scales each channel independently to compensate for different LED efficacies. Applies only to addressable lights with 3 or 4 channels.
+
+```yaml
+color_correct: [75%, 100%, 85%]   # reduce red and blue relative to green
+```
+
+---
+
+## Effects
+
+Effects animate the light over time. Each light type supports a specific subset:
+
+- **Binary lights**: `lambda`, `automation`
+- **Monochromatic lights**: all binary effects + `pulse`, `random`, `flicker`
+- **RGB lights**: all monochromatic effects + `strobe`
+- **Addressable lights**: all RGB effects + `addressable_lambda`, `addressable_rainbow`, `addressable_color_wipe`, `addressable_scan`, `addressable_twinkle`, `addressable_random_twinkle`, `addressable_fireworks`, `addressable_flicker`
+
+```yaml
+light:
+  - platform: neopixelbus
+    ...
+    effects:
+      - pulse:
+          name: "Slow Pulse"
+          transition_length: 2s
+          update_interval: 2s
+          min_brightness: 5%
+          max_brightness: 100%
+      - addressable_rainbow:
+          name: "Rainbow"
+          speed: 10
+          width: 50
+      - addressable_fireworks:
+          name: "Fireworks"
+          update_interval: 32ms
+          spark_probability: 10%
+          use_random_color: false
+          fade_out_rate: 120
+```
+
+<AccordionGroup>
+
+<Accordion title="pulse (monochromatic+)">
+
+Smoothly pulses brightness between `min_brightness` and `max_brightness`.
+
+```yaml
+- pulse:
+    name: "Heartbeat"
+    transition_length: 500ms     # or separate on_length / off_length
+    update_interval: 1s
+    min_brightness: 0%
+    max_brightness: 100%
+```
+
+</Accordion>
+
+<Accordion title="random (monochromatic+)">
+
+Transitions randomly between colors or brightness levels.
+
+```yaml
+- random:
+    name: "Random"
+    transition_length: 7500ms
+    update_interval: 10s
+```
+
+</Accordion>
+
+<Accordion title="strobe (RGB+)">
+
+Cycles through a list of colors with independent durations.
+
+```yaml
+- strobe:
+    name: "Strobe"
+    colors:
+      - state: true
+        brightness: 100%
+        red: 100%
+        green: 0%
+        blue: 0%
+        duration: 500ms
+      - state: false
+        duration: 250ms
+```
+
+</Accordion>
+
+<Accordion title="flicker (monochromatic+)">
+
+Simulates candle-like flickering using an exponential moving average.
+
+```yaml
+- flicker:
+    name: "Candle"
+    alpha: 95%
+    intensity: 1.5%
+```
+
+</Accordion>
+
+<Accordion title="addressable_rainbow (addressable)">
+
+Flows a rainbow gradient along the strip.
+
+```yaml
+- addressable_rainbow:
+    name: "Rainbow"
+    speed: 10
+    width: 50
+```
+
+</Accordion>
+
+<Accordion title="addressable_color_wipe (addressable)">
+
+Wipes segments of color along the strip.
+
+```yaml
+- addressable_color_wipe:
+    name: "Color Wipe"
+    colors:
+      - red: 100%
+        green: 0%
+        blue: 0%
+        num_leds: 5
+        gradient: false
+      - red: 0%
+        green: 100%
+        blue: 0%
+        num_leds: 5
+    add_led_interval: 100ms
+    reverse: false
+```
+
+</Accordion>
+
+<Accordion title="addressable_scan (addressable)">
+
+Bounces a lit segment back and forth along the strip (Knight Rider effect).
+
+```yaml
+- addressable_scan:
+    name: "Scan"
+    move_interval: 100ms
+    scan_width: 3
+```
+
+</Accordion>
+
+<Accordion title="addressable_twinkle (addressable)">
+
+Randomly lights and fades individual LEDs.
+
+```yaml
+- addressable_twinkle:
+    name: "Twinkle"
+    twinkle_probability: 5%
+    progress_interval: 4ms
+```
+
+</Accordion>
+
+<Accordion title="addressable_random_twinkle (addressable)">
+
+Like twinkle but chooses random colors for each lit LED.
+
+```yaml
+- addressable_random_twinkle:
+    name: "Random Twinkle"
+    twinkle_probability: 5%
+    progress_interval: 32ms
+```
+
+</Accordion>
+
+<Accordion title="addressable_fireworks (addressable)">
+
+Launches sparks that travel and fade along the strip.
+
+```yaml
+- addressable_fireworks:
+    name: "Fireworks"
+    update_interval: 32ms
+    spark_probability: 10%
+    use_random_color: false
+    fade_out_rate: 120
+```
+
+</Accordion>
+
+<Accordion title="addressable_flicker (addressable)">
+
+Per-LED flicker with configurable intensity.
+
+```yaml
+- addressable_flicker:
+    name: "Addressable Flicker"
+    update_interval: 16ms
+    intensity: 5%
+```
+
+</Accordion>
+
+<Accordion title="addressable_lambda (addressable)">
+
+Full per-LED control via a C++ lambda. `it` is an `AddressableLight` reference; `current_color` is the requested color; `initial_run` is true on the first call of the effect.
+
+```yaml
+- addressable_lambda:
+    name: "Custom Effect"
+    update_interval: 16ms
+    lambda: |-
+      for (int i = 0; i < it.size(); i++) {
+        it[i] = ESPColor(255, 0, 0);
+      }
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## Automation Triggers
+
+<CardGroup cols={3}>
+  <Card title="on_turn_on" icon="toggle-on">
+    Fires when the light is turned on. No variables.
+  </Card>
+  <Card title="on_turn_off" icon="toggle-off">
+    Fires when the light is turned off. No variables.
+  </Card>
+  <Card title="on_state" icon="circle-dot">
+    Fires on any state change (on, off, color, brightness).
+  </Card>
+</CardGroup>
+
+```yaml
+light:
+  - platform: monochromatic
+    ...
+    on_turn_on:
+      then:
+        - logger.log: "Light turned on"
+    on_turn_off:
+      then:
+        - logger.log: "Light turned off"
+```
+
+---
+
+## Actions
+
+### light.turn_on
+
+Turn the light on with optional color, brightness, effect, or transition settings.
+
+```yaml
+action:
+  - light.turn_on:
+      id: my_light
+      brightness: 75%
+      red: 100%
+      green: 50%
+      blue: 0%
+      transition_length: 500ms
+      effect: "Rainbow"
+```
+
+<Accordion title="light.turn_on parameters">
+
+| Key | Type | Description |
+|---|---|---|
+| `brightness` | percentage | Overall brightness (0–100%) |
+| `color_brightness` | percentage | Color channel brightness independent of white |
+| `red` | percentage | Red channel (0–100%) |
+| `green` | percentage | Green channel (0–100%) |
+| `blue` | percentage | Blue channel (0–100%) |
+| `white` | percentage | White channel for RGBW (0–100%) |
+| `color_temperature` | mireds | Color temperature for CT lights |
+| `cold_white` | percentage | Cold white channel for RGBWW |
+| `warm_white` | percentage | Warm white channel for RGBWW |
+| `transition_length` | time | Fade duration |
+| `flash_length` | time | Duration of a temporary flash |
+| `effect` | string | Start a named effect |
+
+</Accordion>
+
+### light.turn_off
+
+```yaml
+action:
+  - light.turn_off:
+      id: my_light
+      transition_length: 1s
+```
+
+### light.toggle
+
+```yaml
+action:
+  - light.toggle:
+      id: my_light
+      transition_length: 500ms
+```
+
+---
+
+## Platform Examples
+
+<Tabs>
+  <Tab title="GPIO (Binary / Monochromatic)">
+
+A simple relay-switched binary light and a PWM-dimmed monochromatic light.
+
+```yaml
+output:
+  - platform: gpio
+    id: relay_output
+    pin: GPIO5
+
+  - platform: ledc
+    id: pwm_output
+    pin: GPIO4
+    frequency: 1000 Hz
+
+light:
+  - platform: binary
+    name: "Ceiling Light"
+    output: relay_output
+
+  - platform: monochromatic
+    name: "Desk Lamp"
+    output: pwm_output
+    gamma_correct: 2.8
+    default_transition_length: 1s
+    restore_mode: RESTORE_DEFAULT_OFF
+```
+
+  </Tab>
+  <Tab title="LEDC RGB (ESP32)">
+
+Three LEDC PWM channels for a common-anode RGB LED.
+
+```yaml
+output:
+  - platform: ledc
+    id: red_ch
+    pin: GPIO16
+  - platform: ledc
+    id: green_ch
+    pin: GPIO17
+  - platform: ledc
+    id: blue_ch
+    pin: GPIO18
+
+light:
+  - platform: rgb
+    name: "RGB LED"
+    red: red_ch
+    green: green_ch
+    blue: blue_ch
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects:
+      - strobe:
+      - flicker:
+```
+
+  </Tab>
+  <Tab title="NeoPixelBus (Addressable)">
+
+A WS2812B strip driven via the NeoPixelBus library.
+
+```yaml
+light:
+  - platform: neopixelbus
+    name: "LED Strip"
+    type: GRB
+    variant: WS2812X
+    pin: GPIO14
+    num_leds: 60
+    default_transition_length: 500ms
+    restore_mode: RESTORE_DEFAULT_OFF
+    color_correct: [80%, 100%, 80%]
+    effects:
+      - addressable_rainbow:
+          name: "Rainbow Cycle"
+          speed: 20
+          width: 60
+      - addressable_twinkle:
+          name: "Twinkle"
+          twinkle_probability: 10%
+      - addressable_fireworks:
+          name: "Fireworks"
+      - addressable_lambda:
+          name: "Solid Red"
+          lambda: |-
+            for (auto led : it)
+              led = ESPColor(255, 0, 0);
+```
+
+  </Tab>
+  <Tab title="FastLED (Addressable)">
+
+Equivalent strip setup using the FastLED platform.
+
+```yaml
+light:
+  - platform: fastled_clockless
+    name: "FastLED Strip"
+    chipset: WS2812B
+    pin: GPIO13
+    num_leds: 30
+    rgb_order: GRB
+    default_transition_length: 500ms
+    effects:
+      - addressable_rainbow:
+      - addressable_color_wipe:
+```
+
+  </Tab>
+</Tabs>
+
+<Warning>
+The `color_correct` parameter only applies to addressable lights. For RGB lights driven through separate output components, calibrate brightness per-output using the output's `min_power` / `max_power` keys instead.
+</Warning>

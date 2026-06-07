@@ -1,0 +1,563 @@
+---
+title: "Sensor Component: Numeric Measurements in ESPHome"
+sidebarTitle: "Sensor"
+description: "Configure numeric sensor measurements in ESPHome. Covers device_class, state_class, filters, triggers, and popular platforms like DHT22 and ADC."
+---
+
+The `sensor:` component is the foundation for all numeric measurements in ESPHome. Every platform that reports a floating-point value — temperature, humidity, voltage, illuminance, CO₂ concentration, and dozens more — uses this component type as its base. This page covers the shared configuration options available on every sensor, the full filter pipeline, automation triggers, and practical examples using common hardware.
+
+## Base Configuration
+
+All sensor platforms inherit from the same base schema. The keys below apply regardless of which platform (`dht`, `adc`, `bme280`, etc.) you use.
+
+```yaml
+sensor:
+  - platform: <platform_name>
+    name: "My Sensor"           # Required — entity name exposed to HA / MQTT
+    id: my_sensor               # Optional C++ variable ID for automations
+    icon: "mdi:thermometer"     # Optional MDI icon string
+    unit_of_measurement: "°C"   # Optional unit string (max 64 bytes)
+    accuracy_decimals: 1        # Decimal places for display (integer)
+    device_class: temperature   # Home Assistant device class (see below)
+    state_class: measurement    # Home Assistant state class
+    entity_category: diagnostic # "" | diagnostic  (config is blocked for sensors)
+    force_update: false         # Re-publish even when value hasn't changed
+    expire_after: 30s           # Requires MQTT; mark sensor unavailable after timeout
+    update_interval: 60s        # How often to poll (platform-dependent)
+    filters: []                 # Filter pipeline (see Filters section)
+    on_value:                   # Automation triggers (see Triggers section)
+    on_raw_value:
+    on_value_range:
+```
+
+### Device Classes
+
+The `device_class` key maps directly to Home Assistant's sensor device classes and controls the default unit, icon, and formatting. The following values are valid (sourced from `const.py`):
+
+<Accordion title="Full list of sensor device classes">
+
+| Value | Meaning |
+|---|---|
+| `""` (empty) | Generic / no class |
+| `absolute_humidity` | Absolute humidity |
+| `apparent_power` | Apparent power (VA) |
+| `aqi` | Air Quality Index |
+| `area` | Area |
+| `atmospheric_pressure` | Atmospheric pressure |
+| `battery` | Battery percentage |
+| `blood_glucose_concentration` | Blood glucose |
+| `carbon_dioxide` | CO₂ concentration |
+| `carbon_monoxide` | CO concentration |
+| `conductivity` | Electrical conductivity |
+| `current` | Electrical current |
+| `data_rate` | Network data rate |
+| `data_size` | Data size |
+| `distance` | Distance |
+| `duration` | Time duration |
+| `energy` | Energy (kWh) |
+| `energy_distance` | Energy per distance |
+| `energy_storage` | Stored energy |
+| `frequency` | Frequency |
+| `gas` | Gas volume |
+| `humidity` | Relative humidity |
+| `illuminance` | Illuminance (lx) |
+| `irradiance` | Irradiance (W/m²) |
+| `moisture` | Soil moisture |
+| `nitrogen_dioxide` | NO₂ concentration |
+| `nitrogen_monoxide` | NO concentration |
+| `nitrous_oxide` | N₂O concentration |
+| `ozone` | O₃ concentration |
+| `ph` | pH level |
+| `pm1` | PM1 particulate matter |
+| `pm4` | PM4 particulate matter |
+| `pm10` | PM10 particulate matter |
+| `pm25` | PM2.5 particulate matter |
+| `power` | Power (W) |
+| `power_factor` | Power factor |
+| `precipitation` | Precipitation |
+| `precipitation_intensity` | Precipitation rate |
+| `pressure` | Pressure (hPa) |
+| `reactive_energy` | Reactive energy |
+| `reactive_power` | Reactive power (var) |
+| `signal_strength` | Signal strength (dBm) |
+| `sound_pressure` | Sound level (dB) |
+| `speed` | Speed |
+| `sulphur_dioxide` | SO₂ concentration |
+| `temperature` | Temperature |
+| `temperature_delta` | Temperature difference |
+| `uptime` | Device uptime |
+| `volatile_organic_compounds` | VOC (µg/m³) |
+| `volatile_organic_compounds_parts` | VOC (ppm) |
+| `voltage` | Voltage (V) |
+| `volume` | Volume |
+| `volume_flow_rate` | Flow rate |
+| `volume_storage` | Volume storage |
+| `water` | Water volume |
+| `weight` | Weight (kg) |
+| `wind_direction` | Wind direction (°) |
+| `wind_speed` | Wind speed |
+
+</Accordion>
+
+### State Classes
+
+The `state_class` controls how Home Assistant tracks history and computes statistics.
+
+| Value | Use when |
+|---|---|
+| `measurement` | Current point-in-time value (temperature, humidity) |
+| `total` | Monotonically increasing but can reset (energy meter) |
+| `total_increasing` | Strictly increasing counter (pulse counter) |
+| `measurement_angle` | Circular measurement (wind direction) |
+
+---
+
+## Filters
+
+Filters form a processing pipeline applied to sensor values before automation triggers fire and before values are published. Filters are evaluated in order; the output of one becomes the input of the next.
+
+```yaml
+sensor:
+  - platform: adc
+    pin: A0
+    name: "Raw ADC"
+    filters:
+      - offset: -0.5
+      - multiply: 3.3
+      - round: 2
+```
+
+### Available Filters
+
+<AccordionGroup>
+
+<Accordion title="offset">
+
+Add a fixed constant to each value.
+
+```yaml
+filters:
+  - offset: -4.0
+```
+
+</Accordion>
+
+<Accordion title="multiply">
+
+Multiply each value by a constant.
+
+```yaml
+filters:
+  - multiply: 0.001   # convert mA → A
+```
+
+</Accordion>
+
+<Accordion title="filter_out">
+
+Drop specific values (e.g. sentinel or error readings). Accepts a single value or a list.
+
+```yaml
+filters:
+  - filter_out: nan
+  - filter_out: [0.0, -1.0]
+```
+
+</Accordion>
+
+<Accordion title="round">
+
+Round to a given number of decimal places.
+
+```yaml
+filters:
+  - round: 1
+```
+
+</Accordion>
+
+<Accordion title="round_to_multiple_of">
+
+Round to the nearest multiple of a value.
+
+```yaml
+filters:
+  - round_to_multiple_of: 0.5
+```
+
+</Accordion>
+
+<Accordion title="round_to_significant_digits">
+
+Round to a number of significant figures (1–6).
+
+```yaml
+filters:
+  - round_to_significant_digits: 3
+```
+
+</Accordion>
+
+<Accordion title="clamp">
+
+Restrict output to a range. Set `ignore_out_of_range: true` to drop out-of-range values entirely instead of clamping them.
+
+```yaml
+filters:
+  - clamp:
+      min_value: 0.0
+      max_value: 100.0
+      ignore_out_of_range: false
+```
+
+</Accordion>
+
+<Accordion title="delta">
+
+Only pass a value if it differs from the last published value by at least the specified amount. Accepts an absolute float, a percentage string, or a dict with `min_value` / `max_value` keys.
+
+```yaml
+filters:
+  - delta: 0.5      # absolute
+  - delta: 5%       # percentage
+  - delta:
+      min_value: 1.0
+      max_value: 10.0
+```
+
+</Accordion>
+
+<Accordion title="throttle">
+
+Limit the publish rate to at most once per period.
+
+```yaml
+filters:
+  - throttle: 10s
+```
+
+</Accordion>
+
+<Accordion title="throttle_average">
+
+Accumulate readings over a period and publish the average value once per period.
+
+```yaml
+filters:
+  - throttle_average: 60s
+```
+
+</Accordion>
+
+<Accordion title="debounce">
+
+Delay publishing until the value has been stable for the specified duration.
+
+```yaml
+filters:
+  - debounce: 500ms
+```
+
+</Accordion>
+
+<Accordion title="heartbeat">
+
+Guarantee at least one publish per period even if the value hasn't changed. Optionally publish the previous value immediately (optimistic mode).
+
+```yaml
+filters:
+  - heartbeat: 60s
+  # or with optimistic:
+  - heartbeat:
+      period: 30s
+      optimistic: false
+```
+
+</Accordion>
+
+<Accordion title="timeout">
+
+Publish a fallback value after the sensor has been silent for the given duration. Default fallback is `nan`; use `value: last` to re-publish the last known value.
+
+```yaml
+filters:
+  - timeout:
+      timeout: 30s
+      value: nan      # or "last"
+```
+
+</Accordion>
+
+<Accordion title="sliding_window_moving_average">
+
+Maintain a sliding window of readings and publish the average of the window every `send_every` readings.
+
+```yaml
+filters:
+  - sliding_window_moving_average:
+      window_size: 15
+      send_every: 15
+      send_first_at: 1
+```
+
+</Accordion>
+
+<Accordion title="exponential_moving_average">
+
+Compute an exponential moving average with smoothing factor `alpha` (0–1). Lower alpha = more smoothing.
+
+```yaml
+filters:
+  - exponential_moving_average:
+      alpha: 0.1
+      send_every: 15
+```
+
+</Accordion>
+
+<Accordion title="median">
+
+Collect a window of readings and publish the median value.
+
+```yaml
+filters:
+  - median:
+      window_size: 5
+      send_every: 5
+      send_first_at: 1
+```
+
+</Accordion>
+
+<Accordion title="quantile">
+
+Collect a window of readings and publish the given quantile (0 < quantile ≤ 1).
+
+```yaml
+filters:
+  - quantile:
+      window_size: 5
+      send_every: 5
+      quantile: 0.9
+```
+
+</Accordion>
+
+<Accordion title="min / max">
+
+Collect a window of readings and publish the minimum or maximum.
+
+```yaml
+filters:
+  - min:
+      window_size: 5
+      send_every: 5
+  - max:
+      window_size: 10
+      send_every: 10
+```
+
+</Accordion>
+
+<Accordion title="skip_initial">
+
+Discard the first N readings after boot (useful for sensor warm-up).
+
+```yaml
+filters:
+  - skip_initial: 3
+```
+
+</Accordion>
+
+<Accordion title="lambda">
+
+Apply arbitrary C++ logic. Return `{}` (an empty optional) to drop the value.
+
+```yaml
+filters:
+  - lambda: |-
+      if (x < 0) return {};
+      return x * 1.8 + 32;
+```
+
+</Accordion>
+
+<Accordion title="calibrate_linear">
+
+Map raw readings to calibrated values using linear interpolation or least-squares regression over a list of `from → to` data points.
+
+```yaml
+filters:
+  - calibrate_linear:
+      method: least_squares   # or "exact"
+      datapoints:
+        - 0.0 -> 0.0
+        - 1.0 -> 100.0
+```
+
+</Accordion>
+
+<Accordion title="calibrate_polynomial">
+
+Fit a polynomial of a given degree to a set of data points.
+
+```yaml
+filters:
+  - calibrate_polynomial:
+      degree: 2
+      datapoints:
+        - 0.0 -> 0.0
+        - 0.5 -> 45.0
+        - 1.0 -> 100.0
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## Automation Triggers
+
+<CardGroup cols={3}>
+  <Card title="on_value" icon="wave-pulse">
+    Fires after every value that passes through the filter pipeline.
+    Variable `x` (float) holds the new value.
+  </Card>
+  <Card title="on_raw_value" icon="bolt">
+    Fires on every raw reading before any filters are applied.
+    Variable `x` (float) holds the unfiltered value.
+  </Card>
+  <Card title="on_value_range" icon="arrow-down-up-across-line">
+    Fires when the filtered value enters or stays within the given
+    `above` / `below` range.
+  </Card>
+</CardGroup>
+
+```yaml
+sensor:
+  - platform: dht
+    temperature:
+      name: "Temperature"
+      on_value:
+        then:
+          - logger.log:
+              format: "Temperature is %.1f °C"
+              args: ["x"]
+      on_value_range:
+        above: 30.0
+        then:
+          - switch.turn_on: cooling_fan
+```
+
+---
+
+## Platform Examples
+
+<Tabs>
+  <Tab title="DHT22 (Temperature + Humidity)">
+
+The `dht` platform exposes two sensors — temperature and humidity — each with independent filter pipelines.
+
+```yaml
+sensor:
+  - platform: dht
+    pin: GPIO4
+    model: DHT22
+    update_interval: 30s
+    temperature:
+      name: "Room Temperature"
+      device_class: temperature
+      state_class: measurement
+      unit_of_measurement: "°C"
+      accuracy_decimals: 1
+      filters:
+        - offset: -0.5          # calibration correction
+        - exponential_moving_average:
+            alpha: 0.1
+            send_every: 1
+    humidity:
+      name: "Room Humidity"
+      device_class: humidity
+      state_class: measurement
+      unit_of_measurement: "%"
+      accuracy_decimals: 0
+```
+
+  </Tab>
+  <Tab title="ADC (Analog Input)">
+
+The `adc` platform reads from the microcontroller's analog-to-digital converter and can apply voltage attenuation on ESP32.
+
+```yaml
+sensor:
+  - platform: adc
+    pin: GPIO34
+    name: "Soil Moisture"
+    update_interval: 60s
+    attenuation: auto       # ESP32 only
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    filters:
+      - calibrate_linear:
+          datapoints:
+            - 0.3 -> 100.0   # wet
+            - 3.0 -> 0.0     # dry
+      - clamp:
+          min_value: 0.0
+          max_value: 100.0
+      - round: 0
+```
+
+  </Tab>
+  <Tab title="Filtered Power Sensor">
+
+Combining multiple filters to clean up a noisy power reading and ensure minimal publish rate.
+
+```yaml
+sensor:
+  - platform: hlw8012
+    sel_pin: GPIO12
+    cf_pin: GPIO4
+    cf1_pin: GPIO5
+    power:
+      name: "Plug Power"
+      device_class: power
+      state_class: measurement
+      unit_of_measurement: "W"
+      accuracy_decimals: 1
+      filters:
+        - multiply: 1.0         # platform-specific calibration factor
+        - clamp:
+            min_value: 0.0
+            max_value: 3600.0
+        - delta: 1.0            # only publish on ≥1 W change
+        - throttle: 10s         # but no faster than every 10 s
+    update_interval: 5s
+```
+
+  </Tab>
+</Tabs>
+
+---
+
+## Conditions
+
+Use `sensor.in_range` inside automation `condition:` blocks to gate actions on a sensor value.
+
+```yaml
+automation:
+  - trigger: ...
+    condition:
+      - sensor.in_range:
+          id: my_sensor
+          above: 10.0
+          below: 50.0
+    action:
+      - ...
+```
+
+<Note>
+At least one of `above` or `below` must be specified. The condition evaluates to true when the sensor's current value satisfies the specified bounds.
+</Note>

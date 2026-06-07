@@ -1,0 +1,230 @@
+---
+title: "Safe Mode Recovery Component in ESPHome"
+sidebarTitle: "Safe Mode"
+description: "Automatically enter a minimal recovery mode after repeated boot failures, keeping OTA accessible so you can push a fixed firmware wirelessly."
+---
+
+The ESPHome `safe_mode` component protects your device from becoming permanently inaccessible after a firmware bug causes repeated crashes. If the device reboots too many times without staying up long enough to be considered healthy, it enters safe mode — a minimal operating state where only OTA and logging are active — so you can push a corrected firmware over the air. This page covers the configuration parameters, how the boot counter works, the `safe_mode.mark_successful` action, the companion button and switch sub-components, and integration with the `ota:` component.
+
+## How Safe Mode Works
+
+<Steps>
+  <Step title="Count boot attempts">
+    On every boot, `safe_mode` increments a counter stored in RTC memory (survives resets but not power loss). The counter persists across reboots so repeated crashes accumulate.
+  </Step>
+
+  <Step title="Declare boot successful">
+    If the device remains running for at least `boot_is_good_after` (default: 1 minute) without rebooting, the counter is reset to zero and the boot is considered healthy.
+  </Step>
+
+  <Step title="Enter safe mode after too many failures">
+    If the counter reaches `num_attempts` (default: 10) before a successful boot period, the device enters safe mode on the next boot. In safe mode, only essential components — OTA, logger, and Wi-Fi — initialise. The rest of your configuration is skipped.
+  </Step>
+
+  <Step title="Wait for a fix">
+    While in safe mode the device stays reachable over Wi-Fi for `reboot_timeout` (default: 5 minutes). Upload a corrected firmware with `esphome run` before the timeout expires. After the timeout, the device reboots normally and the cycle repeats.
+  </Step>
+</Steps>
+
+<Note>
+`safe_mode` is **automatically loaded** by the `ota` component (`AUTO_LOAD`). You do not need to add `safe_mode:` explicitly unless you want to customise its parameters. An explicit entry lets you override defaults and add automations.
+</Note>
+
+## Basic Configuration
+
+```yaml
+safe_mode:
+```
+
+Adding an empty `safe_mode:` block uses all defaults. Customise any of the options below as needed:
+
+```yaml
+safe_mode:
+  num_attempts: 5
+  reboot_timeout: 3min
+  boot_is_good_after: 2min
+```
+
+## Configuration Variables
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `num_attempts` | positive integer | `10` | Number of failed boots before safe mode is triggered. Must be ≥ 1. |
+| `reboot_timeout` | time duration | `5min` | How long to remain in safe mode before rebooting and trying normal boot again. |
+| `boot_is_good_after` | time duration | `1min` | How long the device must stay up (without rebooting) for the boot to be counted as successful and the counter reset. |
+| `disabled` | boolean | `false` | Set to `true` to compile out safe mode entirely. The OTA component will still load this key, but no SafeModeComponent is instantiated. |
+| `on_safe_mode` | automation | — | Automation(s) to run when safe mode is entered. |
+
+<Warning>
+The boot counter is stored in RTC memory. On a **power cycle** (not just a reset), the counter is lost and the device starts fresh. If your device suffers repeated power outages before the successful-boot window, it will not enter safe mode. If this matters, increase `boot_is_good_after` to give yourself more time after a normal boot before the counter resets.
+</Warning>
+
+## The `on_safe_mode` Trigger
+
+Run custom automations when the device enters safe mode — for example, to blink an LED or send a notification:
+
+```yaml
+safe_mode:
+  num_attempts: 5
+  on_safe_mode:
+    then:
+      - logger.log:
+          level: WARN
+          format: "Entering safe mode after repeated crashes!"
+      - output.turn_on: status_led
+```
+
+<Note>
+Because safe mode skips most component initialisation, only components that run during safe mode (OTA, logger, Wi-Fi, and any manually instantiated outputs) are available inside `on_safe_mode` automations.
+</Note>
+
+## The `safe_mode.mark_successful` Action
+
+In some cases you know the boot is healthy before the `boot_is_good_after` timer expires — for example, after a successful connection to an MQTT broker. Call `safe_mode.mark_successful` to clear the boot counter immediately:
+
+```yaml
+mqtt:
+  broker: !secret mqtt_host
+  on_connect:
+    then:
+      - safe_mode.mark_successful:
+          id: safe_mode_component
+```
+
+You must assign an `id:` to your `safe_mode:` block to reference it:
+
+```yaml
+safe_mode:
+  id: safe_mode_component
+  boot_is_good_after: 5min
+```
+
+## Button and Switch Sub-Components
+
+Safe mode ships two optional sub-components that expose triggering safe mode as a Home Assistant entity.
+
+### Safe Mode Button
+
+Adds a button entity that, when pressed, immediately reboots into safe mode:
+
+```yaml
+button:
+  - platform: safe_mode
+    name: "Enter Safe Mode"
+```
+
+The button uses `device_class: restart` and `entity_category: config` so it appears in the device's configuration section in Home Assistant.
+
+### Safe Mode Switch
+
+Adds a switch entity. Turning it **on** schedules safe mode for the next reboot; the switch is non-invertible (it cannot be turned off to cancel once activated).
+
+```yaml
+switch:
+  - platform: safe_mode
+    name: "Safe Mode Switch"
+```
+
+<Tip>
+The button and switch sub-components both depend on `safe_mode` being present. They require no additional configuration beyond a `name:`.
+</Tip>
+
+## Integration with the OTA Component
+
+The `ota` component's `AUTO_LOAD` list includes `safe_mode`, so whenever you add `ota:` to your configuration, `safe_mode` is loaded automatically with default settings.
+
+```yaml
+# safe_mode is implicitly loaded here with defaults
+ota:
+  - platform: esphome
+    password: !secret ota_password
+```
+
+If you want non-default settings, add an explicit `safe_mode:` block alongside `ota:`:
+
+```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+safe_mode:
+  num_attempts: 5
+  reboot_timeout: 10min
+  boot_is_good_after: 90s
+```
+
+## Disabling Safe Mode
+
+If you explicitly do not want safe mode, set `disabled: true`. No `SafeModeComponent` will be instantiated, though the `ota` component will still attempt to load the schema:
+
+```yaml
+safe_mode:
+  disabled: true
+```
+
+## Factory Reset Companion
+
+The `factory_reset` component (a separate component) lets you reset the device's preferences and stored state to their compiled-in defaults. It can be combined with safe mode for a full recovery path:
+
+```yaml
+button:
+  - platform: factory_reset
+    name: "Factory Reset"
+
+  - platform: safe_mode
+    name: "Enter Safe Mode"
+```
+
+## Full Example
+
+```yaml
+esphome:
+  name: my-device
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: INFO
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+safe_mode:
+  id: safe_mode_component
+  num_attempts: 5
+  reboot_timeout: 5min
+  boot_is_good_after: 1min
+  on_safe_mode:
+    then:
+      - logger.log:
+          level: WARN
+          format: "Safe mode active — waiting for OTA"
+
+button:
+  - platform: safe_mode
+    name: "Restart in Safe Mode"
+
+  - platform: factory_reset
+    name: "Factory Reset"
+```
+
+## Frequently Asked Questions
+
+<Accordion title="What happens if Wi-Fi credentials are wrong and the device can't connect?">
+The device will reboot repeatedly because Wi-Fi setup fails. After `num_attempts` failed boots it enters safe mode. However, in safe mode the device also needs Wi-Fi to accept OTA updates — if credentials are wrong it still cannot connect. In this case you need to perform a physical USB flash to reset credentials.
+</Accordion>
+
+<Accordion title="Does the boot counter survive a power cut?">
+No. RTC memory is cleared on a full power cycle. The counter only persists across software resets and watchdog resets. A hard power cut resets the counter to zero so the device boots normally.
+</Accordion>
+
+<Accordion title="Can I enter safe mode on demand without waiting for failures?">
+Yes. Use the `safe_mode` button or switch sub-component, or call `safe_mode.mark_successful` in reverse — use the button platform which calls `set_safe_mode_pending(true)` before rebooting.
+</Accordion>
+
+<Accordion title="How do I confirm safe mode is active in the logs?">
+Look for the Safe Mode component's `dump_config` output at startup. It prints the configured thresholds. During a safe mode boot, components beyond OTA and logger will not print their `dump_config` lines, which is a clear sign the normal application was not loaded.
+</Accordion>

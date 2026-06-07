@@ -1,0 +1,577 @@
+---
+title: "ESPHome CLI Commands: Complete Flag Reference Guide"
+sidebarTitle: "Commands"
+description: "Full reference for every ESPHome CLI subcommand: syntax, flags, defaults, and terminal examples drawn directly from the argument parser."
+---
+
+This page documents every ESPHome CLI subcommand with its exact flags and defaults, extracted from the argument parser in `esphome/__main__.py`. Global flags (`--verbose`, `--quiet`, `--log-level`, `-s`) apply to all commands and are described in [Overview](/cli/overview).
+
+---
+
+## `esphome config`
+
+Validate a YAML configuration file and pretty-print the fully resolved configuration, including schema defaults. Secrets are redacted in the output by default.
+
+**Syntax**
+
+```bash
+esphome config <file.yaml> [<file.yaml> ...]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--show-secrets` | off | Print secret values instead of redacting them. |
+| `--no-defaults` | off | Output only user-supplied keys, without schema-injected defaults. |
+
+**Examples**
+
+<Tabs>
+  <Tab title="Validate a single file">
+    ```bash
+    esphome config bedroom-light.yaml
+    ```
+  </Tab>
+  <Tab title="Show resolved secrets">
+    ```bash
+    esphome config bedroom-light.yaml --show-secrets
+    ```
+  </Tab>
+  <Tab title="User keys only">
+    ```bash
+    esphome config bedroom-light.yaml --no-defaults
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+`esphome config` is one of the "simple config actions" — you can put the filename before or after the subcommand name for backward compatibility (e.g. `esphome bedroom-light.yaml config`).
+</Note>
+
+---
+
+## `esphome compile`
+
+Read a YAML configuration, generate the C++ source, and compile the firmware binary using PlatformIO or the ESP-IDF toolchain. If sources have not changed, the toolchain incremental build skips recompilation.
+
+**Syntax**
+
+```bash
+esphome compile <file.yaml> [<file.yaml> ...]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--only-generate` | off | Stop after generating the C++ source files — do not invoke the compiler. |
+
+**Example**
+
+```bash
+# Generate source files only (no compiler invocation)
+esphome compile sensor.yaml --only-generate
+
+# Full compile
+esphome compile sensor.yaml
+```
+
+<Tip>
+When you pass multiple YAML files, ESPHome runs each compile in a separate subprocess so that module-level globals (such as LVGL touchscreen state) do not leak between builds. A per-file `SUCCESS` / `ERROR` summary is printed at the end.
+</Tip>
+
+---
+
+## `esphome upload`
+
+Flash a previously compiled binary to a device. ESPHome auto-detects the port type (serial vs. OTA) and selects the appropriate upload method. If `--device` is omitted and multiple options are available, an interactive chooser is shown.
+
+**Syntax**
+
+```bash
+esphome upload <file.yaml> [<file.yaml> ...] [--device PORT] [--file BIN]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device PORT` | interactive | Serial port path, IP address, hostname, or the magic string `OTA`. Repeatable for fallback addresses. |
+| `--upload_speed BAUD` | `460800` or `ESPHOME_UPLOAD_SPEED` env | Override the baud rate used by esptool. |
+| `--file BIN` | build output | Manually specify a binary file to flash instead of the compiled output. |
+| `--ota-platform {esphome,web_server}` | `esphome` | OTA transport to use. `esphome` (native API) uses challenge-response auth; `web_server` uses HTTP Basic auth. |
+| `--partition-table` | off | Upload a partition table image via OTA (requires `allow_partition_access: true` on the OTA component). |
+| `--bootloader` | off | Upload a bootloader image via OTA (requires `allow_partition_access: true`). |
+
+**MQTT flags** (from shared `mqtt_options` parser)
+
+| Flag | Description |
+|---|---|
+| `--topic TOPIC` | Override the MQTT topic for device discovery. |
+| `--username USER` | MQTT username. |
+| `--password PASS` | MQTT password. |
+| `--client-id ID` | MQTT client ID. |
+
+**Examples**
+
+<Tabs>
+  <Tab title="Auto-select port">
+    ```bash
+    esphome upload bedroom-light.yaml
+    ```
+  </Tab>
+  <Tab title="Specific serial port">
+    ```bash
+    esphome upload bedroom-light.yaml --device /dev/ttyUSB0
+    ```
+  </Tab>
+  <Tab title="OTA over network">
+    ```bash
+    esphome upload bedroom-light.yaml --device 192.168.1.42
+    ```
+  </Tab>
+  <Tab title="Custom binary">
+    ```bash
+    esphome upload bedroom-light.yaml --file /tmp/firmware.bin --device OTA
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+`--partition-table` and `--bootloader` are mutually exclusive and can only be used with OTA (network) targets, not serial or BOOTSEL uploads.
+</Warning>
+
+---
+
+## `esphome run`
+
+The all-in-one command: validate the configuration, compile the firmware, upload it to the device, and then stream logs. Equivalent to running `compile`, `upload`, and `logs` in sequence.
+
+**Syntax**
+
+```bash
+esphome run <file.yaml> [<file.yaml> ...] [flags]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device PORT` | interactive | Target device: serial port, IP/hostname, or `OTA`. Repeatable. |
+| `--upload_speed BAUD` | `460800` or env | Override esptool baud rate. |
+| `--no-logs` | off | Skip log streaming after a successful upload. |
+| `--states` | env `ESPHOME_LOG_STATES` (default on) | Show entity state changes in log output. |
+| `--no-states` | — | Suppress entity state changes in log output. |
+| `--reset` / `-r` | `ESPHOME_SERIAL_LOGGING_RESET` env | Deassert RTS/DTR before starting serial logs to reset the device. |
+| `--ota-platform {esphome,web_server}` | `esphome` | OTA transport (see `upload` for details). |
+
+**MQTT flags** — same as `upload` (`--topic`, `--username`, `--password`, `--client-id`).
+
+**Example**
+
+```bash
+# Compile, flash, and tail logs — interactive port chooser if needed
+esphome run bedroom-light.yaml
+
+# Flash over the network and skip log streaming
+esphome run bedroom-light.yaml --device 192.168.1.42 --no-logs
+
+# Show only WARNING+ log lines, suppress state updates
+esphome -l WARNING run sensor.yaml --no-states
+```
+
+<Note>
+For RP2040 targets, after a BOOTSEL upload ESPHome automatically waits for the device to re-enumerate as a serial port before starting logs. If exactly one new port appears, it is selected automatically without prompting.
+</Note>
+
+---
+
+## `esphome logs`
+
+Connect to a device and stream its log output. ESPHome tries log sources in this priority order: native ESPHome API (aioesphomeapi), MQTT, then UART serial.
+
+**Aliases:** `log` (same command, alternate name)
+
+**Syntax**
+
+```bash
+esphome logs <file.yaml> [--device PORT]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device PORT` | interactive | Serial port, IP/hostname, or `OTA`. Repeatable for fallbacks. |
+| `--states` | env `ESPHOME_LOG_STATES` (default on) | Show entity state changes. |
+| `--no-states` | — | Hide entity state changes. |
+| `--reset` / `-r` | `ESPHOME_SERIAL_LOGGING_RESET` env | Deassert RTS/DTR to reset device before opening serial port. |
+
+**MQTT flags** — `--topic`, `--username`, `--password`, `--client-id`.
+
+**Examples**
+
+```bash
+# Auto-detect log source (interactive chooser)
+esphome logs bedroom-light.yaml
+
+# Force serial port
+esphome logs bedroom-light.yaml --device /dev/ttyUSB0
+
+# Stream from a device on the network via API
+esphome logs bedroom-light.yaml --device 192.168.1.42
+
+# Suppress entity state spam
+esphome logs bedroom-light.yaml --no-states
+```
+
+<Accordion title="How log source selection works">
+1. If `--device SERIAL` or a specific serial path is given, UART miniterm is used.
+2. If `--device OTA` or a hostname/IP is given and the config has `api:`, the native ESPHome API client (`aioesphomeapi`) is used for structured, color-coded logs.
+3. If MQTT is configured and `--device MQTT` is given (or auto-detected), MQTT log topic subscription is used.
+4. If none of the above apply and no logger component is configured, an error is raised.
+</Accordion>
+
+---
+
+## `esphome discover`
+
+List ESPHome devices visible on the local network. Currently requires an MQTT broker to be configured in the YAML; the command subscribes to MQTT discovery topics and prints found devices.
+
+**Syntax**
+
+```bash
+esphome discover <file.yaml>
+```
+
+**MQTT flags** — `--topic`, `--username`, `--password`, `--client-id`.
+
+**Example**
+
+```bash
+esphome discover network-device.yaml
+```
+
+<Note>
+`discover` raises an error if the configuration does not include an `mqtt:` block.
+</Note>
+
+---
+
+## `esphome clean`
+
+Delete the PlatformIO / ESP-IDF build directory for a specific configuration. This forces a full recompile the next time `compile` or `run` is invoked.
+
+**Syntax**
+
+```bash
+esphome clean <file.yaml> [<file.yaml> ...]
+```
+
+No additional flags beyond globals.
+
+**Example**
+
+```bash
+esphome clean bedroom-light.yaml
+```
+
+<Tip>
+Use `clean` when you suspect a corrupt or stale build cache. For a more aggressive cleanup that also removes downloaded platform packages, see `clean-all`.
+</Tip>
+
+---
+
+## `esphome clean-all`
+
+Remove all build artifacts **and** downloaded PlatformIO platform packages for a configuration directory. More thorough than `clean`.
+
+**Syntax**
+
+```bash
+esphome clean-all [<directory-or-file> ...]
+```
+
+No additional flags beyond globals. The `configuration` argument accepts zero or more paths (directories or YAML files).
+
+**Example**
+
+```bash
+# Clean everything in the current directory
+esphome clean-all ./config/
+```
+
+---
+
+## `esphome wizard`
+
+An interactive terminal wizard that guides you through creating a new ESPHome YAML configuration file. Prompts for board type, Wi-Fi credentials, OTA password, and more.
+
+**Syntax**
+
+```bash
+esphome wizard <output-file.yaml>
+```
+
+No additional flags beyond globals.
+
+**Example**
+
+```bash
+esphome wizard my-new-device.yaml
+```
+
+---
+
+## `esphome version`
+
+Print the installed ESPHome version and exit immediately. No configuration file is needed.
+
+**Syntax**
+
+```bash
+esphome version
+```
+
+**Example**
+
+```bash
+$ esphome version
+Version: 2026.6.0-dev
+```
+
+---
+
+## `esphome dashboard`
+
+Launch the ESPHome web dashboard — a browser-based UI for managing, editing, compiling, and flashing devices. See [Dashboard](/cli/dashboard) for full documentation.
+
+**Syntax**
+
+```bash
+esphome dashboard <config-directory> [--port PORT] [--open-ui]
+```
+
+**Example**
+
+```bash
+esphome dashboard ./config/ --port 6052 --open-ui
+```
+
+---
+
+## `esphome update-all`
+
+Perform an OTA firmware update for **every** YAML file found in a configuration directory. Each file is processed in its own subprocess; a `SUCCESS` / `FAILED` summary is printed at the end.
+
+**Syntax**
+
+```bash
+esphome update-all <directory-or-file> [<directory-or-file> ...]
+```
+
+No additional flags beyond globals. Internally, this calls `esphome run <file> --no-logs --device OTA` for each YAML found.
+
+**Example**
+
+```bash
+# OTA-update all devices in ./config/
+esphome update-all ./config/
+```
+
+<Warning>
+Files named `secrets.yaml` (and other known secrets filenames) are automatically skipped.
+</Warning>
+
+---
+
+## `esphome rename`
+
+Rename a device: update the `name:` field in the YAML, validate the result, recompile, and OTA-upload the new firmware so the device advertises its new hostname. The old YAML file is deleted on success and a new `<new-name>.yaml` is created.
+
+**Syntax**
+
+```bash
+esphome rename <file.yaml> <new-name>
+```
+
+`<new-name>` must contain only lowercase letters, digits, and hyphens (characters from `ALLOWED_NAME_CHARS`).
+
+No additional flags beyond globals.
+
+**Example**
+
+```bash
+# Rename "bedroom-sensor" to "office-sensor"
+esphome rename bedroom-sensor.yaml office-sensor
+```
+
+<Warning>
+The rename command refuses to overwrite an existing YAML file. If `office-sensor.yaml` already exists, the command exits with an error and no changes are made.
+</Warning>
+
+---
+
+## `esphome idedata`
+
+Emit PlatformIO IDE metadata (include paths, compile flags, library paths, firmware ELF path) as formatted JSON. Used by IDE extensions (e.g. the ESPHome VS Code extension) to enable IntelliSense and code navigation.
+
+**Syntax**
+
+```bash
+esphome idedata <file.yaml>
+```
+
+No additional flags beyond globals. Only compatible with the PlatformIO toolchain; exits with an error for ESP-IDF toolchain configurations.
+
+**Example**
+
+```bash
+esphome idedata bedroom-light.yaml | python -m json.tool | head -30
+```
+
+<Note>
+INFO and WARNING log messages are suppressed during `idedata` so that only the JSON output appears on stdout.
+</Note>
+
+---
+
+## `esphome analyze-memory`
+
+Compile the firmware (incrementally — fast if sources are unchanged) and print a per-component breakdown of RAM and flash usage. Also performs a separate analysis identifying strings stored in RAM that could be moved to flash.
+
+**Syntax**
+
+```bash
+esphome analyze-memory <file.yaml> [<file.yaml> ...]
+```
+
+No additional flags beyond globals.
+
+**Example**
+
+```bash
+esphome analyze-memory bedroom-light.yaml
+```
+
+**Sample output structure**
+
+```
+Component         .text    .rodata   .data    .bss
+esphome core      12 340   4 512     128      640
+wifi              8 920    2 048     64       2 048
+logger            1 024    256       0        32
+...
+
+RAM Strings Analysis
+  "Connected to WiFi"  → 18 bytes (logger component)
+  ...
+```
+
+---
+
+## `esphome bundle`
+
+Package a configuration and all its referenced files (includes, fonts, images, external components) into a self-contained `.esphomebundle` archive. The bundle can be compiled on a remote machine or stored for reproducible builds.
+
+**Syntax**
+
+```bash
+esphome bundle <file.yaml> [<file.yaml> ...] [--output PATH] [--list-only]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--output PATH` / `-o PATH` | `<config-stem>.esphomebundle` in the config directory | Destination path for the bundle archive. |
+| `--list-only` | off | Print the list of files that would be bundled without creating the archive. |
+
+**Examples**
+
+<Tabs>
+  <Tab title="Create bundle">
+    ```bash
+    esphome bundle bedroom-light.yaml
+    # Creates: ./bedroom-light.esphomebundle
+    ```
+  </Tab>
+  <Tab title="Custom output path">
+    ```bash
+    esphome bundle bedroom-light.yaml -o /tmp/release.esphomebundle
+    ```
+  </Tab>
+  <Tab title="List files only">
+    ```bash
+    esphome bundle bedroom-light.yaml --list-only
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## `esphome clean-mqtt`
+
+Clear **retained** MQTT discovery messages published by a device. This is useful when a device is removed from the network and its stale topics should be wiped from the broker.
+
+**Syntax**
+
+```bash
+esphome clean-mqtt <file.yaml> [<file.yaml> ...]
+```
+
+**MQTT flags** — `--topic`, `--username`, `--password`, `--client-id`.
+
+**Example**
+
+```bash
+esphome clean-mqtt old-device.yaml --username admin --password s3cr3t
+```
+
+<Note>
+`clean-mqtt` is one of the "simple config actions" and supports the legacy `esphome <config> clean-mqtt` argument order for backward compatibility.
+</Note>
+
+---
+
+## `esphome vscode`
+
+Output structured configuration data consumed by the ESPHome VS Code extension for schema validation and auto-complete. INFO and WARNING log messages are suppressed so only the extension-protocol data reaches stdout.
+
+**Syntax**
+
+```bash
+esphome vscode <file.yaml> [--ace]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--ace` | off | Output format for the ACE editor integration (used by the dashboard). |
+
+<Note>
+This command is intended for tooling integration, not direct human use.
+</Note>
+
+---
+
+## `esphome config-hash`
+
+Compute and print the 32-bit configuration hash that ESPHome embeds into the firmware. The hash is derived from the fully generated C++ code, so it matches the value reported by a running device via the native API.
+
+**Syntax**
+
+```bash
+esphome config-hash <file.yaml> [<file.yaml> ...]
+```
+
+No additional flags beyond globals.
+
+**Example**
+
+```bash
+$ esphome config-hash bedroom-light.yaml
+0x1a2b3c4d
+```

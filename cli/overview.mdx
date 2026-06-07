@@ -1,0 +1,136 @@
+---
+title: "ESPHome CLI Overview: Installation and Usage Guide"
+sidebarTitle: "Overview"
+description: "Learn how to install and invoke the ESPHome command-line interface, including global flags, substitution overrides, and tab completion."
+---
+
+The ESPHome command-line interface (CLI) is the primary tool for validating configurations, compiling firmware, uploading to devices, and streaming logs for ESP32, ESP8266, BK72xx, and RP2040 microcontrollers. This page covers installation, the global flag set, substitution overrides, and tab completion — everything you need before diving into individual commands.
+
+## Installation
+
+ESPHome is distributed as a Python package. The `esphome` entry point is registered by `pyproject.toml`:
+
+```toml
+[project.scripts]
+esphome = "esphome.__main__:main"
+```
+
+Install it from PyPI with `pip`:
+
+```bash
+pip install esphome
+```
+
+After installation, verify the entry point is on your `PATH`:
+
+```bash
+esphome version
+# Version: 2026.6.0-dev
+```
+
+<Note>
+ESPHome requires **Python 3.11 or newer** (up to 3.14). Running it inside a dedicated virtual environment is recommended to avoid conflicts with system packages.
+</Note>
+
+## General Invocation
+
+```
+esphome [global flags] <command> [command arguments]
+```
+
+Every invocation starts with zero or more **global flags**, followed by a **command** name, followed by that command's own positional arguments and flags.
+
+### Configuration File Argument
+
+Most commands accept one or more YAML configuration files as a positional `configuration` argument. Wildcards and directories are accepted wherever the source notes `nargs="+"` — for example, `esphome compile ./config/*.yaml` processes every YAML in that directory using isolated subprocesses.
+
+```bash
+# Single file
+esphome compile bedroom-light.yaml
+
+# Multiple files (runs each in a subprocess and prints a summary)
+esphome compile config/sensor.yaml config/relay.yaml
+```
+
+## Global Flags
+
+The following flags are parsed before the subcommand and apply to every `esphome` invocation. They are defined in `parse_args()` inside `__main__.py`.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--verbose` | `-v` | `$ESPHOME_VERBOSE` | Enable verbose (DEBUG-level) ESPHome logs. |
+| `--quiet` | `-q` | — | Disable all ESPHome logs (sets level to CRITICAL). |
+| `--log-level LEVEL` | `-l` | `$ESPHOME_LOG_LEVEL` or `INFO` | Set log level. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--substitution KEY VALUE` | `-s` | — | Override a substitution variable defined in the YAML. Can be repeated. |
+| `--version` | — | — | Print the ESPHome version and exit immediately. |
+| `--toolchain TOOLCHAIN` | — | Platform default | Override the build toolchain (`platformio` or `esp-idf`). |
+| `--mdns-address-cache HOST=IP` | — | — | Pre-populate the mDNS address cache (format: `hostname=ip1,ip2`). Repeatable. |
+| `--dns-address-cache HOST=IP` | — | — | Pre-populate the DNS address cache (same format). Repeatable. |
+
+<Tip>
+`--verbose` and `--quiet` both override `--log-level`. If you pass `--verbose`, the effective log level is always `DEBUG` regardless of `--log-level`.
+</Tip>
+
+### Substitution Overrides (`-s`)
+
+The `-s` / `--substitution` flag lets you override a `substitutions:` block value from the command line without editing the YAML file. Supply the key and value as two separate arguments; repeat the flag for multiple overrides.
+
+```bash
+# Override the "device_name" substitution at runtime
+esphome -s device_name my-living-room compile livingroom.yaml
+
+# Multiple overrides
+esphome -s wifi_ssid HomeNetwork -s wifi_password s3cr3t run sensor.yaml
+```
+
+<Warning>
+Substitution overrides from `-s` **bypass the config cache** used by `upload` and `logs` commands. When `-s` flags are present, ESPHome always re-runs the full config validation rather than loading the cached validated config.
+</Warning>
+
+## Tab Completion
+
+ESPHome ships with `argcomplete` integration. The first line of `__main__.py` contains the `# PYTHON_ARGCOMPLETE_OK` marker that signals argcomplete to enable completion for this script.
+
+Enable tab completion in Bash by adding the following to your `~/.bashrc`:
+
+```bash
+eval "$(register-python-argcomplete esphome)"
+```
+
+For Zsh, add this to `~/.zshrc`:
+
+```bash
+eval "$(register-python-argcomplete esphome)"
+```
+
+After sourcing the file (or opening a new shell), pressing <kbd>Tab</kbd> after `esphome` completes subcommands, flag names, and YAML file paths.
+
+## Command Summary
+
+<Note>
+Commands that accept a `configuration` argument also accept multiple files or a glob. Some commands (marked **directory**) expect a path to a directory rather than individual YAML files.
+</Note>
+
+| Command | Input | What It Does |
+|---|---|---|
+| `config` | file(s) | Validate and pretty-print the parsed configuration. |
+| `compile` | file(s) | Generate C++ source and compile firmware with PlatformIO or ESP-IDF. |
+| `upload` | file(s) | Flash the last-compiled binary to a device over serial or OTA. |
+| `run` | file(s) | Compile + upload + stream logs in one step. |
+| `logs` | file | Stream serial or network (API / MQTT) logs from a running device. |
+| `discover` | file | List ESPHome devices visible on the network via MQTT. |
+| `clean` | file(s) | Delete the PlatformIO/ESP-IDF build directory for a config. |
+| `clean-all` | dir | Delete all build and platform package files. |
+| `wizard` | file | Interactive setup wizard that writes a starter YAML file. |
+| `version` | — | Print the installed ESPHome version and exit. |
+| `dashboard` | dir | Launch the web dashboard UI. |
+| `update-all` | dir | OTA-update every YAML in a directory. |
+| `rename` | file + name | Rename a device in YAML, recompile, and re-flash it. |
+| `idedata` | file | Emit PlatformIO IDE metadata as JSON (for IDE integrations). |
+| `analyze-memory` | file(s) | Compile and report per-component RAM/flash usage. |
+| `bundle` | file(s) | Package a config and its dependencies into a `.esphomebundle` archive. |
+| `clean-mqtt` | file(s) | Clear retained MQTT discovery topics for a device. |
+| `vscode` | file | Output configuration data for the VS Code extension. |
+| `config-hash` | file(s) | Compute and print the hash of the compiled config. |
+
+See [Commands](/cli/commands) for full per-command flag reference and examples, and [Dashboard](/cli/dashboard) for the web UI documentation.

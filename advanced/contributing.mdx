@@ -1,0 +1,276 @@
+---
+title: "Contributing to ESPHome: Development Guide"
+sidebarTitle: "Contributing"
+description: "Set up a dev environment, run tests, follow code style rules, and submit quality pull requests to the ESPHome project on GitHub."
+---
+
+ESPHome is an open-source project maintained by the [Open Home Foundation](https://www.openhomefoundation.org/) and welcomes community contributions — from bug fixes and new component drivers to documentation improvements. This page walks through setting up a local development environment, running the test suite, following the project's code style, and submitting a pull request that is likely to be accepted.
+
+## Setting Up the Development Environment
+
+<Steps>
+
+  <Step title="Fork and clone the repository">
+    Fork [esphome/esphome](https://github.com/esphome/esphome) on GitHub, then clone your fork:
+
+    ```bash
+    git clone https://github.com/<your-username>/esphome.git
+    cd esphome
+    ```
+  </Step>
+
+  <Step title="Create a virtual environment">
+    ESPHome requires Python 3.11–3.14. Create and activate a virtual environment:
+
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate   # Windows: venv\Scripts\activate
+    ```
+  </Step>
+
+  <Step title="Install all dependencies">
+    Install the project in editable mode with its development and test extras:
+
+    ```bash
+    pip install -e ".[dev,test]"
+    ```
+
+    This installs the packages declared in `requirements.txt`, `requirements_dev.txt`, and `requirements_test.txt`, including:
+
+    | Package | Purpose |
+    |---------|---------|
+    | `ruff` 0.15.16 | Fast Python linter and formatter |
+    | `pylint` 4.0.5 | Deep static analysis |
+    | `pytest` 9.0.3 | Test runner |
+    | `pytest-cov` 7.1.0 | Coverage reporting |
+    | `pytest-xdist` 3.8.0 | Parallel test execution |
+    | `pytest-asyncio` 1.4.0 | `async` test support |
+    | `hypothesis` 6.92.1 | Property-based testing |
+    | `clang-format` 13.0.1 | C++ code formatting |
+    | `clang-tidy` 22.1.0.1 | C++ static analysis |
+    | `yamllint` 1.38.0 | YAML formatting validation |
+    | `pre-commit` | Git hook automation |
+  </Step>
+
+  <Step title="Install pre-commit hooks">
+    ```bash
+    pre-commit install
+    ```
+
+    Pre-commit runs `ruff`, `ruff-format`, `yamllint`, and `clang-format` automatically on every `git commit`. Hooks are defined in `.pre-commit-config.yaml`.
+  </Step>
+
+</Steps>
+
+## Running Tests
+
+ESPHome has several layers of tests. Run them all locally before submitting a PR.
+
+### Python Unit Tests
+
+```bash
+# Run all unit tests with coverage (parallel, native speed)
+pytest -vv --cov-report=xml --tb=native --durations=30 -n auto tests --ignore=tests/integration/
+
+# Run a single test file
+pytest tests/unit_tests/test_config_validation.py -vv
+
+# Run tests matching a keyword
+pytest -k "test_schema" -vv
+```
+
+The test suite is in `tests/` and includes:
+
+- `tests/unit_tests/` — fast Python unit tests for the config validation and code-gen layers
+- `tests/integration/` — end-to-end compile tests (slower, require a full build environment)
+- `tests/component_tests/` — YAML-level component configuration tests
+- `tests/benchmarks/python/` — CodSpeed performance benchmarks (skipped when `pytest-codspeed` is absent)
+
+<Tip>
+The `pytest.ini_options` in `pyproject.toml` sets `--cov=esphome --cov-branch` by default, so every local run produces branch coverage data. Use `-n auto` to parallelise across all CPU cores with `pytest-xdist`.
+</Tip>
+
+### C++ Static Analysis (clang-tidy)
+
+CI runs `clang-tidy` against changed files on every PR. To run it locally for ESP8266:
+
+```bash
+script/clang-tidy --all-headers --fix
+```
+
+Or restrict to changed files only:
+
+```bash
+script/clang-tidy --all-headers --fix --changed
+```
+
+### C++ Formatting (clang-format)
+
+```bash
+# Check all C++ files
+script/clang-format
+
+# Auto-fix formatting issues
+script/clang-format -i
+```
+
+C++ formatting is enforced by the pre-commit hook using `clang-format` 13.0.1 (version is pinned in `requirements_dev.txt`).
+
+## Code Style
+
+### Python: ruff
+
+`ruff` is the primary Python linter and formatter. Its configuration is in `pyproject.toml` under `[tool.ruff]`:
+
+- **Target**: Python 3.11 (`target-version = "py311"`)
+- **Selected rule sets**: `B`, `E`, `F`, `I`, `PL`, `SIM`, `UP`, `G`, `PERF`, and many more
+- **Notable ignores**: `E501` (line length), `PLR2004` (magic values), `PLR0912` (too many branches)
+- **isort** is configured with `force-sort-within-sections = true` and `known-first-party = ["esphome"]`
+
+```bash
+# Check for lint issues
+ruff check esphome/
+
+# Auto-fix fixable issues
+ruff check --fix esphome/
+
+# Format code (like Black)
+ruff format esphome/
+
+# Check formatting without changes
+ruff format --check esphome/
+```
+
+### Python: pylint
+
+`pylint` runs as a separate CI job for deeper analysis. The configuration is in `pyproject.toml` under `[tool.pylint]`:
+
+```bash
+pylint -f parseable --persistent=n esphome
+```
+
+Key disabled checks (they conflict with ESPHome's style): `format`, `missing-docstring`, `too-many-*`, `invalid-name`, `cyclic-import`.
+
+### YAML: yamllint
+
+Test YAML files in `tests/` are checked with `yamllint`:
+
+```bash
+yamllint tests/
+```
+
+### C++: clang-tidy and clang-format
+
+All C++ component code (`.h` and `.cpp` files) must pass `clang-format` and `clang-tidy`. The style follows the configuration in `.clang-format` and `.clang-tidy` at the repository root.
+
+## Adding a New Component
+
+Adding a hardware driver or integration requires both a Python module and a C++ implementation. The full guide is in [Custom Components](/advanced/custom-components), but here is a brief checklist:
+
+<Steps>
+  <Step title="Create the component directory">
+    ```
+    esphome/components/my_component/
+      __init__.py        # Python: schema + to_code
+      my_component.h     # C++: class definition
+      my_component.cpp   # C++: method implementations (optional)
+      sensor.py          # platform file if IS_PLATFORM_COMPONENT
+    ```
+  </Step>
+
+  <Step title="Set CODEOWNERS">
+    Add your GitHub handle to the `CODEOWNERS` list in `__init__.py`:
+
+    ```python
+    CODEOWNERS = ["@yourgithubhandle"]
+    ```
+
+    The script `script/build_codeowners.py` reads this list and regenerates the `.github/CODEOWNERS` file. CI checks that `CODEOWNERS` is up to date on every PR.
+  </Step>
+
+  <Step title="Add component tests">
+    Place YAML-based tests in `tests/component_tests/components/my_component/`. Integration tests that compile the full firmware live in `tests/integration/`.
+  </Step>
+
+  <Step title="Run the full check suite">
+    ```bash
+    pytest tests/ -n auto --ignore=tests/integration/
+    ruff check esphome/components/my_component/
+    ruff format esphome/components/my_component/
+    pylint esphome/components/my_component/
+    ```
+  </Step>
+</Steps>
+
+## CODEOWNERS System
+
+Every component must list at least one maintainer in its `CODEOWNERS` variable. The `script/build_codeowners.py` script generates `.github/CODEOWNERS` from these values:
+
+- When a PR touches a component's files, GitHub automatically requests a review from that component's owners.
+- When a GitHub Issue is labelled with a component name, the owners are notified.
+- Core files (`esphome/*.py`, `esphome/core/*`, `.github/**`) are owned by `@esphome/core`.
+
+<Note>
+Adding yourself as a `CODEOWNER` means you accept responsibility for reviewing issues and PRs related to that component. The CI job `script/build_codeowners.py --check` fails if your PR adds a component without updating the codeowners list.
+</Note>
+
+## Pull Request Guidelines
+
+<Accordion title="One feature or fix per PR">
+Keep each PR focused on a single change. Mixing an unrelated refactor into a feature PR makes review harder and is a common reason for requests to split the work.
+</Accordion>
+
+<Accordion title="Tests are required">
+All new components and bug fixes should include tests. For components, at minimum provide a YAML test configuration in `tests/component_tests/`. For bug fixes, add a unit test in `tests/unit_tests/` that would have caught the regression.
+</Accordion>
+
+<Accordion title="Follow the existing schema conventions">
+- Use `cv.Required` / `cv.Optional` — never raw dict keys.
+- Provide sensible defaults in `cv.Optional("key", default=...)`.
+- Guard platform-specific keys with `cv.only_on(...)` or `cv.only_with_framework(...)`.
+- Reuse constants from `esphome/const.py` (`CONF_*`, `DEVICE_CLASS_*`, etc.) rather than inventing new string literals.
+</Accordion>
+
+<Accordion title="C++ style">
+- No raw pointers to heap objects that outlive `setup()` — use member variables.
+- Inherit from the correct base class (`Component`, `PollingComponent`, `Sensor`, `Switch`, etc.).
+- Use `ESP_LOGD`, `ESP_LOGI`, `ESP_LOGW`, `ESP_LOGE` for logging — never `printf` or `Serial.print`.
+- All component classes must live inside `esphome::<component_name>` namespaces.
+</Accordion>
+
+<Accordion title="PR title and description">
+Use a clear imperative title: `Add XYZ sensor component`, `Fix GPIO state restore on ESP8266`. Include a short description of what the PR does, a link to the relevant issue (if any), and a note about how you tested it (hardware or compile-only test).
+</Accordion>
+
+## CI/CD Pipeline Overview
+
+Every PR triggers the `CI` GitHub Actions workflow (`.github/workflows/ci.yml`). Key jobs:
+
+| Job | What it checks |
+|-----|----------------|
+| `pylint` | Deep Python static analysis |
+| `ci-custom` | Custom ESPHome-specific checks (e.g. import style) |
+| `import-time` | Checks that `import esphome` does not regress in load time |
+| `pytest` | Python unit + component tests on Ubuntu, macOS, and Windows |
+| `integration-tests` | Full firmware compile tests (split into parallel buckets) |
+| `clang-tidy-single` | C++ static analysis for ESP8266, ESP32-Arduino, and Zephyr |
+| `clang-tidy-nosplit` | C++ static analysis for ESP32-IDF (single job, larger) |
+| `device-builder` | Downstream compatibility test against `esphome/device-builder` |
+
+<Note>
+The `determine-jobs` job analyses which files changed and skips expensive jobs (clang-tidy, integration tests) when only Python or documentation files were modified. This keeps CI fast for small changes.
+</Note>
+
+## Where to Get Help
+
+| Resource | Link |
+|----------|------|
+| Discord server | [discord.gg/KhAMKrd](https://discord.gg/KhAMKrd) — real-time help from maintainers and community |
+| GitHub Discussions | [github.com/orgs/esphome/discussions](https://github.com/orgs/esphome/discussions) — feature requests and long-form questions |
+| GitHub Issues | [github.com/esphome/esphome/issues](https://github.com/esphome/esphome/issues) — bug reports |
+| Developer docs | [developers.esphome.io](https://developers.esphome.io/contributing/code/) — official contributing guide |
+| Community forum | [community.home-assistant.io/c/esphome](https://community.home-assistant.io/c/esphome) — general usage questions |
+
+<Tip>
+Before opening an issue, search existing issues and discussions. Many questions about component behaviour, pinouts, and YAML syntax are already answered in the community forum or Discord.
+</Tip>

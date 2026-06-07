@@ -1,0 +1,178 @@
+---
+title: "Installing ESPHome: pip, Docker, and Home Assistant"
+sidebarTitle: "Installation"
+description: "Install ESPHome via pip, Docker, or the Home Assistant add-on. Covers Python requirements, virtual environments, and verifying your setup."
+---
+
+ESPHome is a Python-based firmware build system that turns YAML configuration files into ready-to-flash firmware for ESP32, ESP8266, BK72xx, and RP2040 microcontrollers. This page walks through every supported installation method and shows you how to confirm that the tool is working correctly.
+
+## System Requirements
+
+Before installing, make sure your system meets the following requirements:
+
+| Requirement | Minimum | Notes |
+|---|---|---|
+| Python | ≥ 3.11.0, < 3.15 | As declared in `pyproject.toml` |
+| Operating System | Windows, macOS, Linux | Any OS that runs Python |
+| USB driver | Platform-specific | Required for first serial flash |
+
+<Note>
+  Python 3.11 is the minimum supported version. Python 3.15 and later are not yet supported. Check your version with `python3 --version` before proceeding.
+</Note>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="pip (Recommended)">
+    Installing via `pip` is the most straightforward method for development machines. Using a virtual environment is strongly recommended so ESPHome's dependencies do not interfere with other Python projects on your system.
+
+    <Steps>
+      <Step title="Create a virtual environment">
+        ```bash
+        python3 -m venv esphome-venv
+        ```
+      </Step>
+
+      <Step title="Activate the virtual environment">
+        <CodeGroup>
+          ```bash macOS / Linux
+          source esphome-venv/bin/activate
+          ```
+
+          ```powershell Windows (PowerShell)
+          esphome-venv\Scripts\Activate.ps1
+          ```
+
+          ```cmd Windows (cmd.exe)
+          esphome-venv\Scripts\activate.bat
+          ```
+        </CodeGroup>
+      </Step>
+
+      <Step title="Install ESPHome">
+        ```bash
+        pip install esphome
+        ```
+
+        This installs ESPHome and all of its runtime dependencies, including PlatformIO, esptool, PyYAML, cryptography, and aioesphomeapi.
+      </Step>
+
+      <Step title="Verify the installation">
+        ```bash
+        esphome version
+        ```
+
+        You should see output similar to:
+
+        ```
+        Version: 2026.6.0
+        ```
+      </Step>
+    </Steps>
+
+    <Tip>
+      Always activate your virtual environment before running `esphome` commands. If you see `command not found`, the virtual environment is likely not active.
+    </Tip>
+  </Tab>
+
+  <Tab title="Docker">
+    The official ESPHome Docker image bundles the tool together with all platform toolchains and PlatformIO packages. This is ideal for CI pipelines, NAS devices, or any machine where you prefer not to install Python packages globally.
+
+    <Steps>
+      <Step title="Pull the Docker image">
+        ```bash
+        docker pull ghcr.io/esphome/esphome:latest
+        ```
+      </Step>
+
+      <Step title="Run ESPHome with your config directory mounted">
+        The container's working directory is `/config` and the entrypoint is `esphome` itself, so you pass subcommands directly. Mount your local configuration directory to `/config`:
+
+        ```bash
+        docker run --rm \
+          -v "${PWD}/config:/config" \
+          -p 6052:6052 \
+          ghcr.io/esphome/esphome:latest \
+          version
+        ```
+
+        For serial flashing, you must also pass through the USB device:
+
+        ```bash
+        docker run --rm \
+          -v "${PWD}/config:/config" \
+          --device /dev/ttyUSB0 \
+          ghcr.io/esphome/esphome:latest \
+          run /config/my-device.yaml
+        ```
+      </Step>
+
+      <Step title="(Optional) Start the web dashboard">
+        The container exposes port `6052` for the ESPHome web dashboard. When no command is given, the container defaults to `dashboard /config`:
+
+        ```bash
+        docker run -d \
+          --name esphome \
+          -v "${PWD}/config:/config" \
+          -p 6052:6052 \
+          ghcr.io/esphome/esphome:latest
+        ```
+
+        Then open [http://localhost:6052](http://localhost:6052) in your browser.
+      </Step>
+    </Steps>
+
+    <Note>
+      The Docker entrypoint script (`docker/docker_entrypoint.sh`) automatically sets up PlatformIO cache directories. If you mount a `/cache` volume, PlatformIO packages are stored there so they survive container restarts without re-downloading.
+    </Note>
+
+    <Warning>
+      On Linux, serial port access inside Docker requires passing `--device /dev/ttyUSB0` (or whichever port your device appears on). You may also need to add your user to the `dialout` group on the host: `sudo usermod -a -G dialout $USER`.
+    </Warning>
+  </Tab>
+
+  <Tab title="Home Assistant Add-on">
+    If you run Home Assistant OS or Home Assistant Supervised, ESPHome is available as an official add-on from the official add-on store. This is the easiest path for Home Assistant users because device discovery and API pairing happen automatically.
+
+    <Steps>
+      <Step title="Open the Add-on Store">
+        In Home Assistant, navigate to **Settings → Add-ons → Add-on Store**.
+      </Step>
+
+      <Step title="Find the ESPHome add-on">
+        Search for **ESPHome** and click the official add-on published by the ESPHome project.
+      </Step>
+
+      <Step title="Install and start the add-on">
+        Click **Install**, wait for the image to download, then click **Start**. Enable **Start on boot** and **Watchdog** to keep the add-on running reliably.
+      </Step>
+
+      <Step title="Open the ESPHome dashboard">
+        Click **Open Web UI** or navigate to the ESPHome panel in your Home Assistant sidebar. The dashboard is served on port `6052` internally.
+      </Step>
+    </Steps>
+
+    <Tip>
+      The Home Assistant add-on ships a dedicated image variant (`ha-addon`) that integrates with Home Assistant's supervisor API. Configuration files are stored in `/config/esphome/` on your Home Assistant host.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Verifying Your Installation
+
+After installing via any method, run:
+
+```bash
+esphome version
+```
+
+The output confirms the installed version and validates that the `esphome` entry point (defined in `pyproject.toml` as `esphome = "esphome.__main__:main"`) is accessible on your `PATH`.
+
+<CardGroup cols={2}>
+  <Card title="First Device" icon="microchip" href="/getting-started/first-device">
+    Create a minimal YAML config and flash your first device over USB.
+  </Card>
+  <Card title="YAML Configuration" icon="code" href="/getting-started/yaml-configuration">
+    Learn the full YAML structure, special tags, and how components map to keys.
+  </Card>
+</CardGroup>
