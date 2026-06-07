@@ -1,7 +1,7 @@
 ---
 title: "Display Component: Screens and E-ink Displays in ESPHome"
 sidebarTitle: "Display"
-description: "Drive OLED, TFT, e-ink, and segment displays in ESPHome. Covers the lambda render loop, fonts, images, drawing primitives, pages, and popular platform drivers."
+description: "Drive OLED, TFT, e-ink, and segment displays in ESPHome. Covers the render lambda, fonts, images, drawing primitives, pages, and popular display drivers."
 ---
 
 The `display:` component provides a unified rendering API for every screen type supported by ESPHome — from tiny 128×64 OLED modules and 7-segment LED displays to large colour TFT panels and slow-refresh e-ink displays. All drawing is done inside a C++ lambda called the *render function*, which ESPHome re-runs every `update_interval`. This page covers the render lambda, font and image loading, every drawing primitive, the pages system, and practical platform examples.

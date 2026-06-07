@@ -35,8 +35,12 @@ The `variant:` key selects the chip die. ESPHome auto-detects the variant from t
 | `ESP32C3` | Single-core RISC-V |
 | `ESP32C5` | Single-core RISC-V, Wi-Fi 6 |
 | `ESP32C6` | Single-core RISC-V, Wi-Fi 6, Thread/Matter |
+| `ESP32C61` | Single-core RISC-V, C6 sub-variant |
 | `ESP32H2` | RISC-V, Thread/Zigbee only (no Wi-Fi) |
+| `ESP32H4` | RISC-V, Thread/Zigbee (H-series) |
+| `ESP32H21` | RISC-V, Thread/Zigbee, H2 sub-variant |
 | `ESP32P4` | High-performance dual-core RISC-V |
+| `ESP32S31` | Dual-core Xtensa, USB-OTG, S3 sub-variant |
 
 ### Framework: Arduino
 
@@ -56,6 +60,7 @@ esp32:
   board: esp32-s3-devkitc-1
   variant: ESP32S3
   flash_size: 4MB          # 2MB, 4MB, 8MB, 16MB, 32MB; default 4MB
+  watchdog_timeout: 5s     # hardware watchdog timeout; 5s–60s (top-level esp32: key)
   framework:
     type: esp-idf
     version: recommended   # or e.g. "5.3.2"
@@ -66,7 +71,6 @@ esp32:
       compiler_optimization: SIZE     # NONE, DEBUG, SIZE, PERF
       ignore_efuse_mac_crc: false
       enable_idf_experimental_features: false
-      watchdog_timeout: 5s            # 5s–60s
 ```
 
 <Note>

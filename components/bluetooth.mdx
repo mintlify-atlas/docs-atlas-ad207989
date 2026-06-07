@@ -1,7 +1,7 @@
 ---
-title: "Bluetooth — BLE Tracker and Proxy for ESP32"
+title: "ESP32 Bluetooth Proxy and BLE Tracker — ESPHome Guide"
 sidebarTitle: "Bluetooth"
-description: "Use ESP32 as a BLE advertisement scanner or Bluetooth proxy for Home Assistant. Covers esp32_ble_tracker, bluetooth_proxy, active/passive scanning, and on_ble_advertise triggers."
+description: "Use ESP32 as a BLE scanner or Bluetooth proxy for Home Assistant. Covers scan parameters, bluetooth_proxy connection slots, and on_ble_advertise triggers."
 ---
 
 ESPHome exposes two complementary Bluetooth Low Energy features on ESP32: the **BLE Tracker** (`esp32_ble_tracker:`) scans for nearby BLE advertisements and can trigger automations or feed data to device-specific integrations, while the **Bluetooth Proxy** (`bluetooth_proxy:`) extends Home Assistant's Bluetooth range by forwarding raw BLE traffic over the native API. This page covers both components, their configuration keys, scan parameters, automation triggers, and supported device integrations.
@@ -14,7 +14,7 @@ All Bluetooth features documented here are **ESP32-only**. They require an ESP32
 
 ## Architecture Overview
 
-```
+```text
 BLE Devices
     │  (advertisements / connections)
     ▼

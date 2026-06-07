@@ -1,7 +1,7 @@
 ---
 title: "Light Component: Addressable and Simple Lighting in ESPHome"
 sidebarTitle: "Light"
-description: "Configure binary, monochromatic, RGB, RGBW, and addressable LED lights in ESPHome. Covers effects, transitions, restore_mode, color correction, and popular platforms."
+description: "Configure binary, monochromatic, RGB, RGBW, and addressable LED lights in ESPHome. Covers effects, transitions, restore_mode, and color correction."
 ---
 
 The `light:` component covers everything from a single on/off LED to a 1000-pixel NeoPixel strip with full RGB animation. ESPHome models lights in terms of their color capability — binary, monochromatic (brightness-only), RGB, RGBW/RGBWW, and addressable — each inheriting a progressively richer configuration schema. This page explains every base option, the effects system, automation triggers and actions, and platform-specific examples.
@@ -80,9 +80,9 @@ color_correct: [75%, 100%, 85%]   # reduce red and blue relative to green
 
 Effects animate the light over time. Each light type supports a specific subset:
 
-- **Binary lights**: `lambda`, `automation`
+- **Binary lights**: `lambda`, `automation`, `strobe`
 - **Monochromatic lights**: all binary effects + `pulse`, `random`, `flicker`
-- **RGB lights**: all monochromatic effects + `strobe`
+- **RGB lights**: all monochromatic effects
 - **Addressable lights**: all RGB effects + `addressable_lambda`, `addressable_rainbow`, `addressable_color_wipe`, `addressable_scan`, `addressable_twinkle`, `addressable_random_twinkle`, `addressable_fireworks`, `addressable_flicker`
 
 ```yaml
@@ -138,7 +138,7 @@ Transitions randomly between colors or brightness levels.
 
 </Accordion>
 
-<Accordion title="strobe (RGB+)">
+<Accordion title="strobe (all light types)">
 
 Cycles through a list of colors with independent durations.
 

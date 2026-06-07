@@ -1,7 +1,7 @@
 ---
-title: "Over-the-Air Updates (OTA) in ESPHome"
+title: "Over-the-Air (OTA) Firmware Updates for ESPHome Devices"
 sidebarTitle: "OTA Updates"
-description: "Configure wireless firmware updates for ESP32, ESP8266, BK72xx, and RP2040 devices using ESPHome's OTA platform system."
+description: "Configure OTA firmware updates in ESPHome: pick a platform, add password protection, and trigger automations on OTA begin, progress, end, error, or abort."
 ---
 
 ESPHome supports Over-the-Air (OTA) firmware updates so you can push new firmware to your devices over Wi-Fi without physical access. This page covers the `ota:` configuration block, supported platforms, event triggers, password protection, and how `esphome run` integrates OTA into your development workflow.
@@ -48,15 +48,18 @@ The built-in ESPHome OTA platform uses a dedicated binary protocol over TCP and 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `platform` | string | — | **Required.** Set to `esphome`. |
-| `password` | string | `""` | OTA password. Strongly recommended for security. |
-
-### `platform: arduino`
-
-Uses the Arduino OTA library (ArduinoOTA). Supported on ESP8266 and ESP32 with the Arduino framework.
+| `password` | string | — | OTA password. Strongly recommended for security. |
+| `port` | integer | *chip-dependent* | TCP port the OTA server listens on. Defaults: ESP8266 `8266`, ESP32 `3232`, RP2040 `2040`, BK72xx/RTL87xx `8892`. |
+| `version` | integer | `2` | OTA protocol version. Accepts `1` or `2`. |
+| `allow_partition_access` | boolean | `false` | Allow OTA updates that access the partition table directly. ESP32 only. |
 
 ### `platform: http_request`
 
 Enables pulling firmware from an HTTP/HTTPS URL. Requires the `http_request` component to be configured.
+
+### `platform: web_server`
+
+Enables OTA uploads through the built-in web server's `/update` endpoint (browser drag-and-drop). Requires the `web_server` component.
 
 ## Safe Mode Integration
 

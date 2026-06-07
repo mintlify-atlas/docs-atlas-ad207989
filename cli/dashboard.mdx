@@ -153,6 +153,7 @@ The dashboard exposes a set of HTTP endpoints served by the Tornado web framewor
 |---|---|---|
 | `GET` | `/` | Main dashboard HTML page. |
 | `GET` | `/login` | Login form. |
+| `POST` | `/login` | Submit login credentials; sets session cookie on success. |
 | `GET` | `/logout` | Clear session cookie and redirect to login. |
 | `GET` | `/devices` | JSON list of all devices and their current state. |
 | `GET` | `/ping` | JSON map of `filename → online_bool` for all devices. |
@@ -165,9 +166,11 @@ The dashboard exposes a set of HTTP endpoints served by the Tornado web framewor
 | `GET` | `/download.bin?configuration=<file>` | Download the compiled firmware binary. |
 | `POST` | `/import` | Import a device configuration from a discovered device. |
 | `POST` | `/wizard` | Generate a new YAML via the wizard API. |
-| `POST` | `/rename?configuration=<file>` | Rename a device (WebSocket). |
+| `WS` | `/rename?configuration=<file>` | Rename a device (streams subprocess output over WebSocket). |
 | `POST` | `/archive?configuration=<file>` | Archive (soft-delete) a device configuration. |
 | `POST` | `/unarchive?configuration=<file>` | Restore an archived configuration. |
+| `POST` | `/delete?configuration=<file>` | Legacy alias for `/archive` — archive (soft-delete) a device. |
+| `POST` | `/undo-delete?configuration=<file>` | Legacy alias for `/unarchive` — restore an archived device. |
 | `GET` | `/secret_keys` | List secret key names defined in `secrets.yaml`. |
 | `GET` | `/json-config?configuration=<file>` | Validated config as JSON (used by the editor). |
 | `GET` | `/prometheus-sd` | Prometheus HTTP service discovery payload. |

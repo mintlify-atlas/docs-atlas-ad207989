@@ -66,6 +66,7 @@ The following flags are parsed before the subcommand and apply to every `esphome
 | `--toolchain TOOLCHAIN` | — | Platform default | Override the build toolchain (`platformio` or `esp-idf`). |
 | `--mdns-address-cache HOST=IP` | — | — | Pre-populate the mDNS address cache (format: `hostname=ip1,ip2`). Repeatable. |
 | `--dns-address-cache HOST=IP` | — | — | Pre-populate the DNS address cache (same format). Repeatable. |
+| `--testing-mode` | — | off | Enable testing mode (disables some validation checks for grouped component testing). |
 
 <Tip>
 `--verbose` and `--quiet` both override `--log-level`. If you pass `--verbose`, the effective log level is always `DEBUG` regardless of `--log-level`.

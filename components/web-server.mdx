@@ -1,7 +1,7 @@
 ---
-title: "Built-in Web Server Component for ESPHome"
+title: "ESPHome Web Server: Dashboard, REST API, and SSE Events"
 sidebarTitle: "Web Server"
-description: "Serve a local web dashboard, REST API, and Server-Sent Events stream directly from your ESPHome device over Wi-Fi on port 80."
+description: "Run a browser dashboard, REST API, and live log stream on your ESPHome device, with HTTP auth, three UI versions, entity sorting, and local asset serving."
 ---
 
 The ESPHome `web_server` component starts a lightweight HTTP server on your device that exposes a browser-accessible dashboard, a REST API for controlling entities, and a Server-Sent Events (SSE) stream for live state updates. This page covers configuration options, the REST endpoints, authentication, UI versions, local asset serving, entity sorting, and memory considerations.
@@ -209,7 +209,7 @@ The web server auto-loads `json` and `web_server_base` components. Combined with
 - Version 2+ embeds the index HTML in PROGMEM rather than building it dynamically, which saves RAM at the cost of a small flash increase.
 
 <Tip>
-On ESP8266 targets, start with `version: 2`, disable `log: false` if you do not need the log stream, and set `include_internal: false`. Check free heap in the startup logs; aim to keep at least 10 KB free at all times.
+On ESP8266 targets, start with `version: 2`, set `log: false` if you do not need the log stream, and set `include_internal: false`. Check free heap in the startup logs; aim to keep at least 10 KB free at all times.
 </Tip>
 
 ## Supported Platforms

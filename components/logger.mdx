@@ -1,5 +1,5 @@
 ---
-title: "Logger Component Configuration in ESPHome"
+title: "ESPHome Logger: Log Levels, UART Selection, and on_message"
 sidebarTitle: "Logger"
 description: "Configure serial and USB logging levels, per-component filtering, hardware UART selection, and the on_message automation trigger in ESPHome."
 ---
@@ -27,7 +27,7 @@ Adding `logger:` with no options uses the defaults (115200 baud, DEBUG level, ha
 | `logs` | map | `{}` | Per-tag log level overrides. Keys are tag strings, values are log levels. |
 | `initial_level` | string | same as `level` | The level active at boot before any runtime changes. Must not be less severe than `level`. |
 | `runtime_tag_levels` | boolean | `false` | Compile in support for changing per-tag levels at runtime even without a `logs:` map. |
-| `deassert_rts_dts` | boolean | `false` | Deassert RTS/DTR lines on boot (useful for boards that reset when these lines toggle). |
+| `deassert_rts_dtr` | boolean | `false` | Deassert RTS/DTR lines on boot (useful for boards that reset when these lines toggle). |
 | `task_log_buffer_size` | integer | `768` | Size of the per-task log buffer (ESP32, BK72xx, LN882x, RTL87xx, nRF52 only). Set to `0` to disable. |
 
 ## Log Levels
@@ -40,10 +40,13 @@ ESPHome defines a strict severity hierarchy. Setting a level compiles out all le
 | `ERROR` | 1 | Fatal and recoverable error conditions. |
 | `WARN` | 2 | Unexpected states that are not necessarily errors. |
 | `INFO` | 3 | High-level operational messages (default for most components). |
-| `CONFIG` | 4 | Component configuration dump at startup. |
 | `DEBUG` | 5 | Detailed operational data. **Default global level.** |
 | `VERBOSE` | 6 | Very detailed output; enables extra debug builds on ESP8266/ESP32. |
 | `VERY_VERBOSE` | 7 | Maximum verbosity; enables I²C debug buffers on ESP32. |
+
+<Note>
+`CONFIG` (severity 4) appears internally in ESPHome's log severity ordering and is emitted by components during their configuration dump at startup. It is **not a valid value** for the `level:` or `logs:` keys — use `INFO` or `DEBUG` to capture configuration output.
+</Note>
 
 <Warning>
 Per-tag levels set in `logs:` cannot be **less severe** than the global `level`. For example, if `level: INFO`, you cannot set a tag to `DEBUG` — that tag would exceed the compiled log ceiling.

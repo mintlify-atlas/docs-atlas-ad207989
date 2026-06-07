@@ -1,7 +1,7 @@
 ---
 title: "Substitutions and Packages: Reusable ESPHome Config"
 sidebarTitle: "Substitutions & Packages"
-description: "Use substitutions for parameterised YAML values and packages to share config fragments across multiple ESPHome devices."
+description: "Use ESPHome substitutions to define reusable YAML variables and packages to share config fragments across multiple device files without duplication."
 ---
 
 Substitutions and packages are ESPHome's two mechanisms for keeping configuration DRY. **Substitutions** let you define named variables at the top of a file (or pass them from the CLI) and reference them anywhere in the YAML with `${variable_name}` syntax. **Packages** let you split configuration into reusable fragments — local files, inline YAML anchors, or remote GitHub repositories — that are merged into the main config before validation. Both features are resolved in a pre-pass before any component schemas are evaluated.
@@ -58,8 +58,8 @@ ESPHome's substitution engine also supports Jinja2 template expressions. If a va
 
 ```yaml
 substitutions:
-  base_interval: "30"
-  # Jinja2 arithmetic expression — result is the integer 60
+  base_interval: 30
+  # Jinja2 arithmetic expression — evaluates 30 * 2, result is the integer 60
   double_interval: "${base_interval * 2}"
 
 sensor:
@@ -229,9 +229,9 @@ packages:
 Remote packages are cloned to a local cache directory. The `refresh` setting controls how often ESPHome checks for updates. Setting `refresh: 0s` forces a re-fetch on every build.
 </Note>
 
-<Warning>
-The `path:` key inside a remote package definition narrows the working directory within the cloned repo; it does not affect `file:` path resolution. All `file:` paths are always relative to the repo root (or the narrowed `path:` sub-directory if set).
-</Warning>
+<Note>
+The `path:` key inside a remote package definition narrows the working directory within the cloned repo. All `file:` paths are resolved relative to the `path:` sub-directory when it is set, or relative to the repo root when it is not.
+</Note>
 
 ### Nested packages
 

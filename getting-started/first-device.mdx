@@ -85,7 +85,7 @@ esphome config my-device.yaml
 
 A valid configuration prints the fully-resolved YAML (with schema defaults applied) and ends with:
 
-```
+```text
 INFO Configuration is valid!
 ```
 
@@ -103,7 +103,7 @@ ESPHome generates C++ source code from your YAML, then invokes the appropriate t
 
 A successful compile ends with:
 
-```
+```text
 INFO Successfully compiled program.
 ```
 
@@ -117,7 +117,7 @@ esphome run my-device.yaml
 
 `esphome run` is equivalent to `compile` + `upload` + `logs` in a single command. If you have multiple serial ports, ESPHome displays an interactive prompt:
 
-```
+```text
 Found multiple options for uploading, please choose one:
   [1] /dev/ttyUSB0 (CP2102 USB to UART Bridge Controller)
   [2] /dev/ttyUSB1 (CH340 serial converter)

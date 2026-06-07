@@ -241,18 +241,26 @@ If the variable is not set and no default is provided, the loader raises an erro
 
 ### `!extend` and `!remove` — Modify Package Defaults
 
-Used inside the `packages:` system to override or remove keys defined by an included package:
+Used inside the `packages:` system to override or remove keys defined by an included package.
+
+`!extend` is applied to the `id:` field of a list item. ESPHome finds the existing item with that ID and deep-merges the new fields into it. `!remove` removes an item by its ID, or can be set on a top-level mapping key to drop it entirely.
 
 ```yaml
 packages:
   base: !include base-device.yaml
 
-# Override a key from the base package
-wifi:
-  ssid: !extend !secret wifi_ssid
-
+# Extend an existing list item defined in the package — merges new fields
+# into the item whose id is "cpu_temperature"
 sensor:
-  - id: !remove cpu_temperature   # remove a sensor defined in the package
+  - id: !extend cpu_temperature
+    update_interval: 10s   # override the update interval from the package
+
+# Remove an existing list item by ID
+sensor:
+  - id: !remove old_voltage_sensor
+
+# Remove a top-level mapping key imported by a package
+wifi: !remove
 ```
 
 ### `!literal` — Prevent Tag Rewriting
@@ -336,7 +344,7 @@ esphome config my-device.yaml
 
 Errors show the full key path including include boundaries:
 
-```
+```text
 In: wifi->password in my-device.yaml 7:12
   Secret 'wifi_password' not defined
 ```

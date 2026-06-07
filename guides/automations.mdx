@@ -10,7 +10,7 @@ ESPHome's automation system lets you describe device behaviour entirely in YAML 
 
 ## The automation model
 
-```
+```text
 Trigger  →  [Conditions]  →  Actions
 ```
 
@@ -96,7 +96,7 @@ Conditions are evaluated when an automation fires, before the actions run. Multi
 
 ### `and`, `or`, `not`, `xor`
 
-These are the fundamental boolean combinators. `and` (alias `all`) requires every sub-condition to be true. `or` (alias `any`) requires at least one. `not` inverts a single condition. `xor` requires exactly an odd number of sub-conditions to be true.
+These are the fundamental boolean combinators. `and` (alias `all`) requires every sub-condition to be true. `or` (alias `any`) requires at least one. `not` inverts a single condition. `xor` requires **exactly one** sub-condition to be true (it is false when zero or more than one sub-condition is true).
 
 ```yaml
 on_press:
@@ -131,7 +131,7 @@ condition:
 
 ### `component.is_idle`
 
-True when the given polling component has no pending update.
+True when the given component has no pending update (i.e. its `is_idle()` method returns true).
 
 ```yaml
 condition:

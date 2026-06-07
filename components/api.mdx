@@ -1,7 +1,7 @@
 ---
 title: "Native API — ESPHome's Encrypted Device Protocol"
 sidebarTitle: "Native API"
-description: "Configure the ESPHome native API for direct Home Assistant integration. Covers encryption keys, user-defined actions, HA service calls, connection triggers, and max_connections."
+description: "Configure the ESPHome native API for Home Assistant integration. Covers Noise encryption, user-defined actions, HA service calls, and connection triggers."
 ---
 
 The `api:` component activates ESPHome's native binary protocol — a purpose-built, low-overhead alternative to MQTT for communicating directly with Home Assistant. Unlike MQTT, the native API does not require a separate broker: Home Assistant connects to the device over TCP port 6053 and communicates using an encrypted, protobuf-framed protocol. This page covers encryption configuration, user-defined actions (services callable from Home Assistant), calling Home Assistant services from the device, connection lifecycle triggers, and connection-limit tuning.
